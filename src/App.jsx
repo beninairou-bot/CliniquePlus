@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const SUPABASE_URL = 'https://dmummfgcdtqjjioatbsb.supabase.co';
+const SUPABASE_URL = 'https://dnummfgcdtqjjioatbsb.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRudW1tZmdjZHRxamppb2F0YnNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI5OTcwMjgsImV4cCI6MjA5ODU3MzAyOH0.lD7hRRlKiV_R7UMGc_gGPQAmBM9awi5IwAsf5Q6FQ3c';
 
 const sbFetch = async (path, options = {}, token = SUPABASE_ANON_KEY) => {
