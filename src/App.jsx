@@ -1,7 +1,25 @@
 import { useState, useEffect, useCallback } from "react";
 
-const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL || 'https://dnummfgcdtqjjioatbsb.supabase.co';
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY || '';
+
+// Upload fichier vers Supabase Storage
+const uploadFichier = async (bucket, path, file, token) => {
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'apikey': SUPABASE_ANON_KEY, 'Content-Type': file.type },
+    body: file,
+  });
+  if (r.ok) return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+  return null;
+};
+
+// Persistance session dans localStorage
+const SESSION_KEY = 'cliniplus_session';
+const saveSession = (s) => { try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch(e) {} };
+const loadSession = () => { try { const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch(e) { return null; } };
+const clearSession = () => { try { localStorage.removeItem(SESSION_KEY); } catch(e) {} };
+
 const sbFetch = async (path, options = {}, token = SUPABASE_ANON_KEY) => {
   const r = await fetch(`${SUPABASE_URL}${path}`, {
     ...options,
@@ -30,24 +48,73 @@ const dbAPI = {
   del: (table, filter, token) => sbFetch(`/rest/v1/${table}?${filter}`, { method: 'DELETE' }, token),
 };
 
-const ROLES = {
-  admin: { label: 'Administrateur', color: '#8b5cf6' },
-  medecin: { label: 'Médecin', color: '#0ea5e9' },
-  secretaire: { label: 'Secrétaire', color: '#f59e0b' },
-  pharmacien: { label: 'Pharmacien', color: '#00c896' },
-  infirmier: { label: 'Infirmier(e)', color: '#f97316' },
-  caissier: { label: 'Caissier', color: '#ef4444' },
+
+// ===== FEDAPAY & TARIFS =====
+
+const TARIFS = {
+  cabinet:      { montant: 10000 },
+  clinique:     { montant: 15000 },
+  hopital:      { montant: 20000 },
+  polyclinique: { montant: 20000 },
+  centre_sante: { montant: 20000 },
+};
+const getTarif = (type) => TARIFS[type] || { montant: 15000 };
+
+const joursRestants = (dateExp) => {
+  if (!dateExp) return 0;
+  const diff = new Date(dateExp) - new Date();
+  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 };
 
+const uploadLogo = async (file, cliniqueId, token) => {
+  try {
+    const ext = file.name.split('.').pop();
+    const path = cliniqueId + '/logo.' + ext;
+    const r = await fetch(SUPABASE_URL + '/storage/v1/object/logos/' + path, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'apikey': SUPABASE_ANON_KEY, 'Content-Type': file.type, 'x-upsert': 'true' },
+      body: file
+    });
+    if (r.ok) return SUPABASE_URL + '/storage/v1/object/public/logos/' + path + '?t=' + Date.now();
+    return null;
+  } catch { return null; }
+};
+const ROLES = {
+  admin:      { label: 'Administrateur', color: '#8b5cf6' },
+  medecin:    { label: 'Médecin',        color: '#0ea5e9' },
+  secretaire: { label: 'Secrétaire',     color: '#f59e0b' },
+  pharmacien: { label: 'Pharmacien',     color: '#00c896' },
+  infirmier:  { label: 'Infirmier(e)',   color: '#f97316' },
+  caissier:   { label: 'Caissier',       color: '#ef4444' },
+  laborantin: { label: 'Laborantin',     color: '#06b6d4' },
+};
+
+// Matrice des accès par rôle
+// write = accès complet | read = lecture seule | constantes = saisie constantes/analyses | pharmacie_only = pharmacien
+const ACCES = {
+  admin:      { patients:'write', consultations:'write', rdv:'write', pharmacie:'write', facturation:'write', equipe:'write', parametres:'write', analyses:'write' },
+  medecin:    { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
+  secretaire: { patients:'write', consultations:'point', rdv:'write', pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:'point' },
+  pharmacien: { patients:false,   consultations:false,   rdv:false,   pharmacie:'write', facturation:false,   equipe:false,   parametres:false,  analyses:false   },
+  infirmier:  { patients:'read',  consultations:'read',  rdv:'read',  pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:false   },
+  caissier:   { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:false   },
+  laborantin: { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
+};
+
+const peutAcceder = (role, mod) => !!(ACCES[role]?.[mod]);
+const peutEcrire  = (role, mod) => ACCES[role]?.[mod] === 'write';
+const estPoint    = (role, mod) => ACCES[role]?.[mod] === 'point';
+
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Tableau de bord', icon: '📊', roles: ['admin', 'medecin', 'secretaire', 'pharmacien', 'infirmier', 'caissier'] },
-  { id: 'patients', label: 'Patients', icon: '👥', roles: ['admin', 'medecin', 'secretaire', 'infirmier'] },
-  { id: 'consultations', label: 'Consultations', icon: '🩺', roles: ['admin', 'medecin', 'infirmier'] },
-  { id: 'rendez_vous', label: 'Rendez-vous', icon: '📅', roles: ['admin', 'medecin', 'secretaire'] },
-  { id: 'pharmacie', label: 'Pharmacie', icon: '💊', roles: ['admin', 'pharmacien'] },
-  { id: 'facturation', label: 'Facturation', icon: '🧾', roles: ['admin', 'caissier', 'secretaire'] },
-  { id: 'equipe', label: 'Équipe', icon: '👨‍⚕️', roles: ['admin'] },
-  { id: 'parametres', label: 'Paramètres', icon: '⚙️', roles: ['admin'] },
+  { id: 'dashboard',     label: 'Tableau de bord', icon: '📊', roles: ['admin','medecin','secretaire','pharmacien','infirmier','caissier','laborantin'] },
+  { id: 'patients',      label: 'Patients',         icon: '👥', roles: ['admin','medecin','secretaire','infirmier'] },
+  { id: 'consultations', label: 'Consultations',    icon: '🩺', roles: ['admin','medecin','secretaire','infirmier'] },
+  { id: 'analyses',      label: 'Analyses',         icon: '🔬', roles: ['admin','medecin','secretaire','laborantin'] },
+  { id: 'rdv',           label: 'Rendez-vous',      icon: '📅', roles: ['admin','medecin','secretaire'] },
+  { id: 'pharmacie',     label: 'Pharmacie',        icon: '💊', roles: ['admin','pharmacien'] },
+  { id: 'facturation',   label: 'Facturation',      icon: '🧾', roles: ['admin','caissier','secretaire'] },
+  { id: 'equipe',        label: 'Équipe',            icon: '👨‍⚕️',roles: ['admin'] },
+  { id: 'parametres',    label: 'Paramètres',       icon: '⚙️', roles: ['admin'] },
 ];
 
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -1620,6 +1687,7 @@ function EquipePage({ session, clinique }) {
                 <option value="secretaire">Secrétaire</option>
                 <option value="pharmacien">Pharmacien</option>
                 <option value="caissier">Caissier</option>
+                <option value="laborantin">Laborantin</option>
               </select>
             </div>
             <div className="form-group"><label className="form-label">Spécialité</label><input className="form-input" placeholder="Ex: Pédiatrie" value={form.specialite} onChange={e => setForm(f => ({ ...f, specialite: e.target.value }))} /></div>
@@ -1635,15 +1703,38 @@ function EquipePage({ session, clinique }) {
 
 // ========== PARAMETRES ==========
 
-function ParametresPage({ session, clinique, profil }) {
-  const [form, setForm] = useState({ nom: clinique.nom || '', type: clinique.type || '', ville: clinique.ville || '', pays: clinique.pays || '', adresse: clinique.adresse || '', telephone: clinique.telephone || '', email: clinique.email || '', ifu: clinique.ifu || '' });
+function ParametresPage({ session, clinique, profil, onCliniqueUpdate }) {
+  const [form, setForm] = useState({ nom: clinique.nom || '', type: clinique.type || '', ville: clinique.ville || '', pays: clinique.pays || '', adresse: clinique.adresse || '', telephone: clinique.telephone || '', email: clinique.email || '', ifu: clinique.ifu || '', sigle: clinique.sigle || '' });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState(clinique.logo_url || '');
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [abonnement, setAbonnement] = useState(null);
+  const [showPaiement, setShowPaiement] = useState(false);
   const token = session?.access_token;
+  const jours = joursRestants(clinique.date_expiration_abonnement);
+
+  const handleLogoChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert('Le fichier est trop grand. Maximum 2 Mo.'); return; }
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
+  };
 
   const save = async () => {
     setSaving(true);
-    await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, form, token);
+    let logoUrl = clinique.logo_url;
+    if (logoFile) {
+      setUploadingLogo(true);
+      const url = await uploadLogo(logoFile, clinique.id, token);
+      if (url) logoUrl = url;
+      setUploadingLogo(false);
+    }
+    const updated = { ...form, logo_url: logoUrl };
+    await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, updated, token);
+    if (onCliniqueUpdate) onCliniqueUpdate({ ...clinique, ...updated });
     setSaving(false); setSaved(true);
     setTimeout(() => setSaved(false), 3000);
   };
@@ -1651,6 +1742,58 @@ function ParametresPage({ session, clinique, profil }) {
   return (
     <div className="fade-in">
       {saved && <div className="alert alert-success">✅ Paramètres sauvegardés avec succès !</div>}
+
+      {/* Abonnement */}
+      <div className="card">
+        <div className="card-header"><span className="card-title">💳 Abonnement</span></div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
+              {jours > 0 ? `✅ Actif — ${jours} jour${jours > 1 ? 's' : ''} restant${jours > 1 ? 's' : ''}` : '🔒 Expiré'}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text2)' }}>
+              Tarif : <strong>{fmtMoney(getTarif(clinique.type).montant)}/mois</strong> | Expiration : {clinique.date_expiration_abonnement ? fmtDate(clinique.date_expiration_abonnement) : '—'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
+              Type : {clinique.type} | Plan : {clinique.plan}
+            </div>
+          </div>
+          <button className="btn btn-primary" onClick={() => setShowPaiement(true)}>
+            💳 {jours > 0 ? 'Renouveler l\'abonnement' : 'Réactiver l\'abonnement'}
+          </button>
+        </div>
+      </div>
+
+      {/* Logo et Sigle */}
+      <div className="card">
+        <div className="card-header"><span className="card-title">🖼️ Logo et Sigle</span></div>
+        <div className="form-row">
+          <div>
+            <div className="form-label">Logo de la clinique</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8 }}>
+              {logoPreview
+                ? <img src={logoPreview} alt="logo" style={{ width: 80, height: 80, borderRadius: 12, objectFit: 'cover', border: '2px solid var(--border)' }} />
+                : <div style={{ width: 80, height: 80, borderRadius: 12, background: 'var(--surface2)', border: '2px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>🏥</div>
+              }
+              <div>
+                <label style={{ cursor: 'pointer' }}>
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoChange} />
+                  <span className="btn btn-secondary btn-sm">📁 Choisir une image</span>
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>PNG, JPG, SVG — Max 2 Mo</div>
+                {logoFile && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4 }}>✅ {logoFile.name}</div>}
+              </div>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Sigle / Abréviation</label>
+            <input className="form-input" placeholder="Ex: CHU, CS, CAB..." value={form.sigle} onChange={e => setForm(f => ({ ...f, sigle: e.target.value }))} maxLength={10} />
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Affiché dans la barre supérieure à la place du nom complet</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Infos clinique */}
       <div className="card">
         <div className="card-header"><span className="card-title">⚙️ Informations de la clinique</span></div>
         <div className="form-group"><label className="form-label">Nom de la clinique</label><input className="form-input" value={form.nom} onChange={e => setForm(f => ({ ...f, nom: e.target.value }))} /></div>
@@ -1668,13 +1811,595 @@ function ParametresPage({ session, clinique, profil }) {
           <div className="form-group"><label className="form-label">IFU</label><input className="form-input" value={form.ifu} onChange={e => setForm(f => ({ ...f, ifu: e.target.value }))} /></div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving && <Spinner />} Sauvegarder</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving || uploadingLogo}>
+            {(saving || uploadingLogo) && <span className="spinner" />}
+            {uploadingLogo ? 'Upload logo...' : saving ? 'Sauvegarde...' : '💾 Sauvegarder'}
+          </button>
         </div>
+      </div>
+
+      {showPaiement && (
+        <ModalPaiement
+          clinique={clinique}
+          session={session}
+          onClose={() => setShowPaiement(false)}
+          onSuccess={() => {
+            const newExp = new Date();
+            newExp.setMonth(newExp.getMonth() + 1);
+            if (onCliniqueUpdate) onCliniqueUpdate({ ...clinique, date_expiration_abonnement: newExp.toISOString(), abonnement_actif: true });
+            setShowPaiement(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// ========== POINT CONSULTATIONS (Secrétaire / Infirmier) ==========
+function PointConsultationsPage({ session, clinique, profil }) {
+  const [consultations, setConsultations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const tk = session?.access_token;
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const d = await dbAPI.get('consultations', `clinique_id=eq.${clinique.id}&order=created_at.desc`, tk);
+      if (Array.isArray(d)) setConsultations(d);
+      setLoading(false);
+    };
+    load();
+  }, [clinique.id, tk]);
+
+  const filtered = consultations.filter(c =>
+    `${c.motif || ''} ${c.diagnostic || ''}`.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const stats = {
+    total: consultations.length,
+    termine: consultations.filter(c => c.statut === 'termine').length,
+    en_cours: consultations.filter(c => c.statut === 'en_cours').length,
+    suivi: consultations.filter(c => c.statut === 'suivi_requis').length,
+  };
+
+  return (
+    <div className="fade-in">
+      <div className="alert alert-info">
+        ℹ️ En tant que <strong>{ROLES[profil.role]?.label}</strong>, vous consultez le point des consultations. Pour saisir des constantes ou résultats d'analyses, utilisez le module <strong>Analyses</strong>.
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 24 }}>
+        <div className="stat-card blue"><div className="stat-icon">🩺</div><div className="stat-value">{stats.total}</div><div className="stat-label">Total consultations</div></div>
+        <div className="stat-card green"><div className="stat-icon">✅</div><div className="stat-value">{stats.termine}</div><div className="stat-label">Terminées</div></div>
+        <div className="stat-card orange"><div className="stat-icon">⏳</div><div className="stat-value">{stats.en_cours}</div><div className="stat-label">En cours</div></div>
+        <div className="stat-card red"><div className="stat-icon">🔁</div><div className="stat-value">{stats.suivi}</div><div className="stat-label">Suivi requis</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">🩺 Liste des consultations</span>
+          <input className="search-input" placeholder="🔍 Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        {loading ? <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>
+          : filtered.length === 0 ? <div className="empty"><div className="empty-icon">🩺</div><p>Aucune consultation</p></div>
+            : <table className="table">
+              <thead><tr><th>Date</th><th>Motif</th><th>Diagnostic</th><th>Statut</th></tr></thead>
+              <tbody>{filtered.map(c => (
+                <tr key={c.id}>
+                  <td>{fmtDate(c.date_consultation)}</td>
+                  <td>{c.motif}</td>
+                  <td><strong>{c.diagnostic}</strong></td>
+                  <td>
+                    <span className="badge" style={{
+                      background: c.statut === 'termine' ? 'rgba(0,200,150,0.1)' : c.statut === 'suivi_requis' ? 'rgba(245,158,11,0.1)' : 'rgba(14,165,233,0.1)',
+                      color: c.statut === 'termine' ? 'var(--accent)' : c.statut === 'suivi_requis' ? 'var(--accent3)' : 'var(--accent2)'
+                    }}>{c.statut === 'termine' ? '✅ Terminé' : c.statut === 'suivi_requis' ? '🔁 Suivi requis' : '⏳ En cours'}</span>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+        }
       </div>
     </div>
   );
 }
 
+// ========== ANALYSES (Laborantin / Secrétaire / Médecin / Admin) ==========
+function AnalysesPage({ session, clinique, profil }) {
+  const [analyses, setAnalyses] = useState([]);
+  const [consultations, setConsultations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [editAnalyse, setEditAnalyse] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [filterStatut, setFilterStatut] = useState('');
+  const tk = session?.access_token;
+  const canWrite = peutEcrire(profil.role, 'analyses') || profil.role === 'laborantin';
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [a, c] = await Promise.all([
+      dbAPI.get('analyses', `clinique_id=eq.${clinique.id}&order=date_prescription.desc`, tk),
+      dbAPI.get('consultations', `clinique_id=eq.${clinique.id}&select=id,motif,diagnostic,patient_id`, tk),
+    ]);
+    if (Array.isArray(a)) setAnalyses(a);
+    if (Array.isArray(c)) setConsultations(c);
+    setLoading(false);
+  }, [clinique.id, tk]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const saveAnalyse = async (a) => {
+    setSaving(true);
+    if (a.id) {
+      await dbAPI.patch('analyses', `id=eq.${a.id}`, {
+        resultat: a.resultat,
+        valeurs_reference: a.valeurs_reference,
+        interpretation: a.interpretation,
+        statut: a.statut,
+        date_resultat: a.statut === 'resultat_recu' ? new Date().toISOString() : null,
+      }, tk);
+    }
+    await load();
+    setEditAnalyse(null);
+    setSaving(false);
+  };
+
+  const getConsult = (id) => consultations.find(c => c.id === id);
+
+  const stats = {
+    total: analyses.length,
+    prescrit: analyses.filter(a => a.statut === 'prescrit').length,
+    attente: analyses.filter(a => a.statut === 'en_attente').length,
+    recu: analyses.filter(a => a.statut === 'resultat_recu').length,
+    interne: analyses.filter(a => a.type === 'interne').length,
+    externe: analyses.filter(a => a.type === 'externe').length,
+  };
+
+  const filtered = analyses.filter(a => {
+    const matchSearch = `${a.nom} ${a.laboratoire_externe || ''}`.toLowerCase().includes(search.toLowerCase());
+    const matchStatut = !filterStatut || a.statut === filterStatut;
+    return matchSearch && matchStatut;
+  });
+
+  const statutColor = (s) => ({
+    prescrit: { bg: 'rgba(14,165,233,0.1)', color: 'var(--accent2)' },
+    en_attente: { bg: 'rgba(245,158,11,0.1)', color: 'var(--accent3)' },
+    resultat_recu: { bg: 'rgba(0,200,150,0.1)', color: 'var(--accent)' },
+  }[s] || { bg: 'var(--surface2)', color: 'var(--text3)' });
+
+  const statutLabel = (s) => ({ prescrit: 'Prescrit', en_attente: 'En attente', resultat_recu: 'Résultat reçu' }[s] || s);
+
+  return (
+    <div className="fade-in">
+      {profil.role === 'laborantin' && (
+        <div className="alert alert-info">
+          🔬 Bienvenue <strong>{profil.prenom} {profil.nom}</strong>. Vous pouvez saisir et mettre à jour les résultats des analyses prescrites.
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16, marginBottom: 24 }}>
+        <div className="stat-card blue"><div className="stat-icon">🔬</div><div className="stat-value">{stats.total}</div><div className="stat-label">Total analyses</div></div>
+        <div className="stat-card orange"><div className="stat-icon">⏳</div><div className="stat-value">{stats.attente + stats.prescrit}</div><div className="stat-label">En attente de résultat</div></div>
+        <div className="stat-card green"><div className="stat-icon">✅</div><div className="stat-value">{stats.recu}</div><div className="stat-label">Résultats reçus</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">🔬 Analyses ({filtered.length})</span>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <select className="form-select" style={{ width: 'auto', padding: '8px 12px', fontSize: 13 }} value={filterStatut} onChange={e => setFilterStatut(e.target.value)}>
+              <option value="">Tous les statuts</option>
+              <option value="prescrit">Prescrit</option>
+              <option value="en_attente">En attente</option>
+              <option value="resultat_recu">Résultat reçu</option>
+            </select>
+            <input className="search-input" placeholder="🔍 Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+        </div>
+
+        {loading ? <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>
+          : filtered.length === 0 ? <div className="empty"><div className="empty-icon">🔬</div><p>Aucune analyse trouvée</p></div>
+            : <table className="table">
+              <thead><tr><th>Date</th><th>Analyse</th><th>Type</th><th>Consultation liée</th><th>Résultat</th><th>Statut</th>{canWrite && <th>Action</th>}</tr></thead>
+              <tbody>{filtered.map(a => {
+                const c = getConsult(a.consultation_id);
+                const sc = statutColor(a.statut);
+                return (
+                  <tr key={a.id}>
+                    <td style={{ fontSize: 12 }}>{fmtDate(a.date_prescription)}</td>
+                    <td><strong>{a.nom}</strong></td>
+                    <td>
+                      <span className="tag" style={{ background: a.type === 'interne' ? 'rgba(0,200,150,0.1)' : 'rgba(14,165,233,0.1)', color: a.type === 'interne' ? 'var(--accent)' : 'var(--accent2)' }}>
+                        {a.type === 'interne' ? '🏥 Interne' : '🔗 Externe'}
+                      </span>
+                      {a.laboratoire_externe && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{a.laboratoire_externe}</div>}
+                    </td>
+                    <td style={{ fontSize: 12 }}>{c ? c.diagnostic : '—'}</td>
+                    <td>
+                      {a.resultat
+                        ? <div><div style={{ fontSize: 13 }}>{a.resultat}</div>{a.valeurs_reference && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Réf: {a.valeurs_reference}</div>}{a.interpretation && <div style={{ fontSize: 11, color: 'var(--accent2)' }}>{a.interpretation}</div>}</div>
+                        : <span style={{ color: 'var(--text3)', fontSize: 12 }}>En attente</span>
+                      }
+                    </td>
+                    <td><span className="badge" style={{ background: sc.bg, color: sc.color }}>{statutLabel(a.statut)}</span></td>
+                    {canWrite && <td>
+                      <button className="btn btn-warning btn-sm" onClick={() => setEditAnalyse({ ...a })}>
+                        {a.statut === 'resultat_recu' ? '✏️ Modifier' : '📝 Saisir résultat'}
+                      </button>
+                    </td>}
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+        }
+      </div>
+
+      {editAnalyse && (
+        <Modal title={`📝 ${editAnalyse.nom} — Saisir/modifier le résultat`} onClose={() => setEditAnalyse(null)} footer={
+          <><button className="btn btn-secondary" onClick={() => setEditAnalyse(null)}>Annuler</button>
+            <button className="btn btn-primary" onClick={() => saveAnalyse(editAnalyse)} disabled={saving}>{saving && <span className="spinner" />} Sauvegarder</button></>
+        }>
+          <div className="alert alert-info" style={{ marginBottom: 16 }}>
+            <strong>Analyse :</strong> {editAnalyse.nom} | <strong>Type :</strong> {editAnalyse.type === 'interne' ? '🏥 Interne' : `🔗 Externe${editAnalyse.laboratoire_externe ? ' — ' + editAnalyse.laboratoire_externe : ''}`}
+          </div>
+          <div className="form-group">
+            <label className="form-label">Statut *</label>
+            <select className="form-select" value={editAnalyse.statut} onChange={e => setEditAnalyse(a => ({ ...a, statut: e.target.value }))}>
+              <option value="prescrit">Prescrit</option>
+              <option value="en_attente">En attente du résultat</option>
+              <option value="resultat_recu">Résultat reçu ✅</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Résultat</label>
+            <textarea className="form-textarea" placeholder="Saisir le résultat de l'analyse..." value={editAnalyse.resultat || ''} onChange={e => setEditAnalyse(a => ({ ...a, resultat: e.target.value }))} style={{ minHeight: 100 }} />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Valeurs de référence</label>
+              <input className="form-input" placeholder="Ex: 4.0 - 11.0 G/L" value={editAnalyse.valeurs_reference || ''} onChange={e => setEditAnalyse(a => ({ ...a, valeurs_reference: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Interprétation</label>
+              <input className="form-input" placeholder="Ex: Normal / Anormal" value={editAnalyse.interpretation || ''} onChange={e => setEditAnalyse(a => ({ ...a, interpretation: e.target.value }))} />
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ========== PAIEMENT FEDAPAY ==========
+function ModalPaiement({ clinique, session, onClose, onSuccess }) {
+  const [telephone, setTelephone] = useState('');
+  const [operateur, setOperateur] = useState('mtn');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [etape, setEtape] = useState('formulaire'); // formulaire | attente | succes
+  const tarif = getTarif(clinique.type);
+  const tk = session?.access_token;
+
+  const initierPaiement = async () => {
+    if (!telephone || telephone.length < 8) { setError('Numéro de téléphone invalide.'); return; }
+    setLoading(true); setError('');
+    try {
+      // Charger le SDK FedaPay dynamiquement
+      if (!window.FedaPay) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.fedapay.com/checkout.js?v=1.1.7';
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+      }
+
+      window.FedaPay.init({
+        public_key: FEDAPAY_PUBLIC_KEY,
+        transaction: {
+          amount: tarif.montant,
+          description: `Abonnement CliniPlus — ${clinique.nom} (${tarif.label})`,
+          callback_url: window.location.origin,
+        },
+        customer: {
+          email: clinique.email || 'contact@cliniplus.app',
+          lastname: clinique.nom,
+          phone_number: { number: telephone, country: 'BJ' },
+        },
+        onComplete: async (resp) => {
+          if (resp.reason === window.FedaPay.DIALOG_DISMISSED) {
+            setLoading(false);
+            setError('Paiement annulé.');
+            return;
+          }
+          if (resp.transaction?.status === 'approved') {
+            // Paiement validé — mettre à jour l'abonnement
+            const nouvelleExpiration = new Date();
+            nouvelleExpiration.setMonth(nouvelleExpiration.getMonth() + 1);
+            await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, {
+              abonnement_actif: true,
+              date_expiration_abonnement: nouvelleExpiration.toISOString(),
+            }, tk);
+            setEtape('succes');
+            setTimeout(() => { onSuccess(nouvelleExpiration.toISOString()); }, 2000);
+          } else {
+            setError('Paiement non confirmé. Veuillez réessayer.');
+            setLoading(false);
+          }
+        },
+      }).open();
+    } catch (e) {
+      setError('Erreur lors de l\'initialisation du paiement. Vérifiez votre connexion.');
+    }
+    setLoading(false);
+  };
+
+  if (etape === 'succes') return (
+    <Modal title="✅ Paiement confirmé" onClose={onClose}>
+      <div style={{ textAlign: 'center', padding: 24 }}>
+        <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Abonnement renouvelé !</div>
+        <p style={{ color: 'var(--text2)', fontSize: 13 }}>Votre abonnement est actif pour 30 jours supplémentaires.</p>
+      </div>
+    </Modal>
+  );
+
+  return (
+    <Modal title="💳 Renouveler l'abonnement" onClose={onClose} footer={
+      <><button className="btn btn-secondary" onClick={onClose}>Annuler</button>
+        <button className="btn btn-primary" onClick={initierPaiement} disabled={loading}>
+          {loading && <span className="spinner" />} {loading ? 'Traitement...' : `Payer ${tarif.montant.toLocaleString('fr-FR')} FCFA`}
+        </button></>
+    }>
+      {error && <div className="alert alert-error">⚠️ {error}</div>}
+
+      <div style={{ background: 'rgba(0,200,150,0.05)', border: '1px solid rgba(0,200,150,0.2)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{clinique.nom}</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>{tarif.label}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, color: 'var(--accent)' }}>{tarif.montant.toLocaleString('fr-FR')} FCFA</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>/ mois</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Opérateur Mobile Money</label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 4 }}>
+          {[['mtn', '🟡 MTN Mobile Money'], ['moov', '🔵 Moov Money']].map(([op, label]) => (
+            <div key={op} onClick={() => setOperateur(op)} style={{ border: `2px solid ${operateur === op ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, padding: '12px 16px', cursor: 'pointer', background: operateur === op ? 'rgba(0,200,150,0.05)' : 'var(--surface2)', fontWeight: operateur === op ? 600 : 400, fontSize: 13, textAlign: 'center', transition: 'all 0.15s' }}>
+              {label}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Numéro de téléphone *</label>
+        <input className="form-input" type="tel" placeholder="Ex: 97000000" value={telephone} onChange={e => setTelephone(e.target.value.replace(/\D/g, ''))} maxLength={10} />
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Numéro {operateur === 'mtn' ? 'MTN' : 'Moov'} Bénin associé à votre compte Mobile Money</div>
+      </div>
+
+      <div className="alert alert-info">
+        ℹ️ Vous recevrez une invite de paiement sur votre téléphone. Confirmez avec votre code PIN Mobile Money.
+      </div>
+    </Modal>
+  );
+}
+
+// ========== BANNIÈRE ABONNEMENT ==========
+function BanniereAbonnement({ clinique, session, onRenew }) {
+  if (!clinique.date_expiration_abonnement) return null;
+
+  const expiration = new Date(clinique.date_expiration_abonnement);
+  const maintenant = new Date();
+  const joursRestants = Math.ceil((expiration - maintenant) / (1000 * 60 * 60 * 24));
+  const tarif = getTarif(clinique.type);
+
+  if (joursRestants > 7) return null; // Pas d'alerte si plus de 7 jours
+
+  const expire = joursRestants <= 0;
+
+  return (
+    <div style={{
+      background: expire ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)',
+      border: `1px solid ${expire ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`,
+      borderRadius: 10,
+      padding: '12px 20px',
+      margin: '0 0 20px 0',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 20 }}>{expire ? '🚨' : '⚠️'}</span>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 13, color: expire ? 'var(--danger)' : 'var(--accent3)' }}>
+            {expire ? 'Abonnement expiré !' : `Abonnement expire dans ${joursRestants} jour(s)`}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+            {expire
+              ? 'Renouvelez votre abonnement pour continuer à utiliser CliniPlus.'
+              : `Renouvelez avant le ${expiration.toLocaleDateString('fr-FR')} — ${tarif.montant.toLocaleString('fr-FR')} FCFA/mois`}
+          </div>
+        </div>
+      </div>
+      <button className="btn btn-primary btn-sm" onClick={onRenew} style={{ flexShrink: 0 }}>
+        💳 Renouveler maintenant
+      </button>
+    </div>
+  );
+}
+
+// ========== BANNIERE ABONNEMENT ==========
+function BanniereAbonnement({ clinique, session, onRenew }) {
+  const jours = joursRestants(clinique.date_expiration_abonnement);
+  if (jours > 7) return null;
+
+  if (jours === 0) return (
+    <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div>
+        <div style={{ fontWeight: 700, color: 'var(--danger)', fontSize: 14 }}>🔒 Abonnement expiré</div>
+        <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 2 }}>Votre accès est suspendu. Renouvelez pour continuer.</div>
+      </div>
+      <button className="btn btn-danger" onClick={onRenew}>💳 Renouveler maintenant</button>
+    </div>
+  );
+
+  return (
+    <div style={{ background: jours <= 3 ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)', border: `1px solid ${jours <= 3 ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`, borderRadius: 10, padding: '12px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div>
+        <div style={{ fontWeight: 700, color: jours <= 3 ? 'var(--danger)' : 'var(--accent3)', fontSize: 14 }}>
+          ⏰ Abonnement expire dans {jours} jour{jours > 1 ? 's' : ''}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>
+          Tarif : {fmtMoney(getTarif(clinique.type).montant)}/mois
+        </div>
+      </div>
+      <button className="btn btn-warning" onClick={onRenew}>💳 Renouveler</button>
+    </div>
+  );
+}
+
+// ========== MODAL PAIEMENT FEDAPAY ==========
+function ModalPaiement({ clinique, session, onClose, onSuccess }) {
+  const [telephone, setTelephone] = useState('');
+  const [operateur, setOperateur] = useState('mtn');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [etape, setEtape] = useState('form'); // form | attente | succes
+  const tarif = getTarif(clinique.type);
+  const tk = session?.access_token;
+
+  const initierPaiement = async () => {
+    if (!telephone || telephone.length < 8) { setError('Numéro de téléphone invalide.'); return; }
+    setLoading(true); setError('');
+    try {
+      const resp = await fetch('https://api.fedapay.com/v1/transactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${FEDAPAY_PUBLIC_KEY}`,
+        },
+        body: JSON.stringify({
+          description: `Abonnement CliniPlus - ${clinique.nom}`,
+          amount: tarif.montant,
+          currency: { iso: 'XOF' },
+          callback_url: window.location.origin,
+          customer: {
+            firstname: clinique.nom,
+            lastname: '',
+            email: clinique.email || 'noreply@cliniplus.app',
+            phone_number: { number: telephone, country: 'BJ' }
+          }
+        })
+      });
+      const data = await resp.json();
+      if (data?.v1?.token) {
+        setEtape('attente');
+        // Ouvrir FedaPay checkout
+        window.FedaPay && window.FedaPay.init({
+          public_key: FEDAPAY_PUBLIC_KEY,
+          transaction: { id: data.v1.id, token: data.v1.token },
+          onComplete: async (resp) => {
+            if (resp.reason === window.FedaPay.DIALOG_DISMISSED) { setEtape('form'); return; }
+            if (resp.transaction?.status === 'approved') {
+              // Mettre à jour la date d'expiration dans Supabase
+              const newExp = new Date();
+              newExp.setMonth(newExp.getMonth() + 1);
+              await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, {
+                date_expiration_abonnement: newExp.toISOString(),
+                abonnement_actif: true
+              }, tk);
+              setEtape('succes');
+              setTimeout(() => { onSuccess(); onClose(); }, 2000);
+            } else {
+              setError('Paiement non confirmé. Veuillez réessayer.'); setEtape('form');
+            }
+          }
+        }).open();
+      } else {
+        // Fallback: paiement direct Mobile Money via FedaPay
+        setError(data?.message || 'Erreur lors de l\'initiation du paiement.');
+      }
+    } catch (e) {
+      setError('Erreur de connexion. Vérifiez votre connexion internet.');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ background: 'var(--surface)', borderRadius: 16, width: '100%', maxWidth: 440, padding: 32, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+        {etape === 'form' && <>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>📱</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700 }}>Renouveler l'abonnement</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 6 }}>{clinique.nom} — {clinique.type}</div>
+          </div>
+          <div style={{ background: 'rgba(0,200,150,0.08)', border: '1px solid rgba(0,200,150,0.2)', borderRadius: 10, padding: 16, marginBottom: 20, textAlign: 'center' }}>
+            <div style={{ fontSize: 28, fontWeight: 800, fontFamily: 'var(--font-display)', color: 'var(--accent)' }}>{fmtMoney(tarif.montant)}</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>par mois — 1 mois d'accès complet</div>
+          </div>
+          {error && <div className="alert alert-error">⚠️ {error}</div>}
+          <div className="form-group">
+            <label className="form-label">Opérateur Mobile Money</label>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+              <div onClick={() => setOperateur('mtn')} style={{ flex: 1, border: `2px solid ${operateur === 'mtn' ? '#ffcc00' : 'var(--border)'}`, borderRadius: 10, padding: '12px 8px', cursor: 'pointer', textAlign: 'center', background: operateur === 'mtn' ? 'rgba(255,204,0,0.08)' : 'var(--surface2)', transition: 'all 0.15s' }}>
+                <div style={{ fontSize: 24 }}>🟡</div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>MTN MoMo</div>
+              </div>
+              <div onClick={() => setOperateur('moov')} style={{ flex: 1, border: `2px solid ${operateur === 'moov' ? '#0066cc' : 'var(--border)'}`, borderRadius: 10, padding: '12px 8px', cursor: 'pointer', textAlign: 'center', background: operateur === 'moov' ? 'rgba(0,102,204,0.08)' : 'var(--surface2)', transition: 'all 0.15s' }}>
+                <div style={{ fontSize: 24 }}>🔵</div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>Moov Money</div>
+              </div>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Numéro de téléphone *</label>
+            <input className="form-input" type="tel" placeholder={operateur === 'mtn' ? '6X XX XX XX (MTN)' : '9X XX XX XX (Moov)'} value={telephone} onChange={e => setTelephone(e.target.value.replace(/\D/g, ''))} maxLength={10} style={{ fontSize: 16, letterSpacing: 1 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+            <button className="btn btn-secondary" style={{ flex: 1 }} onClick={onClose}>Annuler</button>
+            <button className="btn btn-primary" style={{ flex: 2 }} onClick={initierPaiement} disabled={loading}>
+              {loading && <span className="spinner" />} {loading ? 'Traitement...' : `💳 Payer ${fmtMoney(tarif.montant)}`}
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center', marginTop: 12 }}>
+            🔒 Paiement sécurisé via FedaPay · Vous recevrez une confirmation par SMS
+          </div>
+        </>}
+
+        {etape === 'attente' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📲</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Confirmez sur votre téléphone</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 20 }}>Un message vous a été envoyé au <strong>{telephone}</strong>. Composez votre code PIN {operateur === 'mtn' ? 'MTN MoMo' : 'Moov Money'} pour valider le paiement.</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--text3)', fontSize: 13 }}>
+              <span className="spinner spinner-dark" /> En attente de confirmation...
+            </div>
+          </div>
+        )}
+
+        {etape === 'succes' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>Paiement confirmé !</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)' }}>Votre abonnement a été renouvelé pour 1 mois. Merci !</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 // ========== APP PRINCIPAL ==========
 
 export default function App() {
@@ -1684,10 +2409,35 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [view, setView] = useState('login');
   const [patientPourConsult, setPatientPourConsult] = useState(null);
+  const [loadingSession, setLoadingSession] = useState(true);
+  const [showPaiement, setShowPaiement] = useState(false);
+
+  // Restaurer la session au chargement
+  useEffect(() => {
+    const restore = async () => {
+      const saved = loadSession();
+      if (saved?.access_token) {
+        const token = saved.access_token;
+        const userId = saved.user?.id;
+        const p = await dbAPI.get('profils', `id=eq.${userId}`, token);
+        if (Array.isArray(p) && p.length > 0) {
+          const c = await dbAPI.get('cliniques', `id=eq.${p[0].clinique_id}`, token);
+          if (Array.isArray(c) && c.length > 0) {
+            setSession(saved);
+            setProfil(p[0]);
+            setClinique(c[0]);
+          } else { clearSession(); }
+        } else { clearSession(); }
+      }
+      setLoadingSession(false);
+    };
+    restore();
+  }, []);
 
   const handleLogin = async (sessionData) => {
     const token = sessionData.access_token;
     const userId = sessionData.user?.id;
+    saveSession(sessionData);
     setSession(sessionData);
     const p = await dbAPI.get('profils', `id=eq.${userId}`, token);
     if (Array.isArray(p) && p.length > 0) {
@@ -1697,13 +2447,33 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => { setSession(null); setProfil(null); setClinique(null); setPage('dashboard'); setView('login'); };
+  const handleLogout = () => {
+    clearSession();
+    setSession(null); setProfil(null); setClinique(null);
+    setPage('dashboard'); setView('login');
+  };
 
   const lancerConsultation = (patient) => { setPatientPourConsult(patient); setPage('consultations'); };
 
   const roleInfo = profil ? (ROLES[profil.role] || { label: profil.role, color: '#6b7280' }) : null;
   const navItems = NAV_ITEMS.filter(item => !profil || item.roles.includes(profil.role));
   const pageInfo = NAV_ITEMS.find(n => n.id === page);
+
+  // Écran de chargement pendant la restauration de session
+  if (loadingSession) {
+    return (
+      <>
+        <style>{STYLES}</style>
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', flexDirection: 'column', gap: 16, fontFamily: 'var(--font-body)' }}>
+          <div className="logo-icon" style={{ width: 56, height: 56, borderRadius: 16, fontSize: 22 }}>C+</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700 }}>CliniPlus</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text3)', fontSize: 13 }}>
+            <span className="spinner spinner-dark" /> Chargement...
+          </div>
+        </div>
+      </>
+    );
+  }
 
   if (!session || !profil || !clinique) {
     return (
@@ -1738,8 +2508,14 @@ export default function App() {
       <div className="app">
         <div className="sidebar">
           <div className="sidebar-logo">
-            <div className="logo-icon">C+</div>
-            <div><div className="logo-text">CliniPlus</div><div style={{ fontSize: 10, color: 'var(--text3)' }}>Gestion clinique</div></div>
+            {clinique.logo_url
+              ? <img src={clinique.logo_url} alt="logo" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }} />
+              : <div className="logo-icon">C+</div>
+            }
+            <div>
+              <div className="logo-text" style={{ fontSize: clinique.sigle ? 14 : 17 }}>{clinique.sigle || 'CliniPlus'}</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{clinique.nom}</div>
+            </div>
           </div>
           <nav className="nav">
             {navItems.map(item => (
@@ -1763,20 +2539,48 @@ export default function App() {
 
         <div className="main">
           <div className="topbar">
-            <span className="topbar-title">{pageInfo?.icon} {pageInfo?.label}</span>
-            <span className="topbar-badge">🏥 {clinique.nom}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
+              {clinique.logo_url
+                ? <img src={clinique.logo_url} alt="logo" style={{ width: 32, height: 32, borderRadius: 8, objectFit: 'cover' }} />
+                : null}
+              <span className="topbar-title">{pageInfo?.icon} {pageInfo?.label}</span>
+            </div>
+            <span className="topbar-badge">🏥 {clinique.sigle || clinique.nom}</span>
           </div>
           <div className="content">
+            {profil.role === 'admin' && (
+              <BanniereAbonnement
+                clinique={clinique}
+                session={session}
+                onRenew={() => setShowPaiement(true)}
+              />
+            )}
             {page === 'dashboard' && <DashboardPage session={session} clinique={clinique} profil={profil} />}
-            {page === 'patients' && <PatientsPage session={session} clinique={clinique} onConsult={lancerConsultation} />}
-            {page === 'consultations' && <ConsultationsPage session={session} clinique={clinique} patientInitial={patientPourConsult} onClearPatient={() => setPatientPourConsult(null)} />}
-            {page === 'rendez_vous' && <RendezVousPage session={session} clinique={clinique} />}
-            {page === 'pharmacie' && <PharmaciePage session={session} clinique={clinique} />}
+            {page === 'patients' && <PatientsPage session={session} clinique={clinique} onConsult={lancerConsultation} profil={profil} />}
+            {page === 'consultations' && (profil.role === 'secretaire' || profil.role === 'infirmier'
+              ? <PointConsultationsPage session={session} clinique={clinique} profil={profil} />
+              : <ConsultationsPage session={session} clinique={clinique} patientInitial={patientPourConsult} onClearPatient={() => setPatientPourConsult(null)} profil={profil} />
+            )}
+            {page === 'analyses' && <AnalysesPage session={session} clinique={clinique} profil={profil} />}
+            {page === 'rdv' && <RendezVousPage session={session} clinique={clinique} />}
+            {page === 'pharmacie' && <PharmaciePage session={session} clinique={clinique} profil={profil} />}
             {page === 'facturation' && <FacturationPage session={session} clinique={clinique} />}
             {page === 'equipe' && <EquipePage session={session} clinique={clinique} />}
-            {page === 'parametres' && <ParametresPage session={session} clinique={clinique} profil={profil} />}
+            {page === 'parametres' && <ParametresPage session={session} clinique={clinique} profil={profil} onCliniqueUpdate={(c) => setClinique(c)} />}
           </div>
         </div>
+
+        {showPaiement && (
+          <ModalPaiement
+            clinique={clinique}
+            session={session}
+            onClose={() => setShowPaiement(false)}
+            onSuccess={(newExp) => {
+              setClinique(c => ({ ...c, date_expiration_abonnement: newExp, abonnement_actif: true }));
+              setShowPaiement(false);
+            }}
+          />
+        )}
       </div>
     </>
   );
