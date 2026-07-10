@@ -52,11 +52,11 @@ const dbAPI = {
 // ===== FEDAPAY & TARIFS =====
 
 const TARIFS = {
-  cabinet:      { montant: 10000 },
-  clinique:     { montant: 15000 },
-  hopital:      { montant: 20000 },
-  polyclinique: { montant: 20000 },
-  centre_sante: { montant: 20000 },
+  cabinet:      { montant: 15000 },
+  clinique:     { montant: 20000 },
+  hopital:      { montant: 25000 },
+  polyclinique: { montant: 25000 },
+  centre_sante: { montant: 25000 },
 };
 const getTarif = (type) => TARIFS[type] || { montant: 15000 };
 
@@ -107,12 +107,15 @@ const estPoint    = (role, mod) => ACCES[role]?.[mod] === 'point';
 
 const NAV_ITEMS = [
   { id: 'dashboard',     label: 'Tableau de bord', icon: '📊', roles: ['admin','medecin','secretaire','pharmacien','infirmier','caissier','laborantin'] },
+  { id: 'rapport',       label: 'Rapport journalier',icon: '📋',roles: ['admin','secretaire','pharmacien','caissier'] },
+  { id: 'statistiques',  label: 'Statistiques',     icon: '📈', roles: ['admin','medecin'] },
   { id: 'patients',      label: 'Patients',         icon: '👥', roles: ['admin','medecin','secretaire','infirmier'] },
   { id: 'consultations', label: 'Consultations',    icon: '🩺', roles: ['admin','medecin','secretaire','infirmier'] },
   { id: 'analyses',      label: 'Analyses',         icon: '🔬', roles: ['admin','medecin','secretaire','laborantin'] },
   { id: 'rdv',           label: 'Rendez-vous',      icon: '📅', roles: ['admin','medecin','secretaire'] },
   { id: 'pharmacie',     label: 'Pharmacie',        icon: '💊', roles: ['admin','pharmacien'] },
   { id: 'facturation',   label: 'Facturation',      icon: '🧾', roles: ['admin','caissier','secretaire'] },
+  { id: 'rh',            label: 'Ressources Humaines',icon: '👔',roles: ['admin'] },
   { id: 'equipe',        label: 'Équipe',            icon: '👨‍⚕️',roles: ['admin'] },
   { id: 'parametres',    label: 'Paramètres',       icon: '⚙️', roles: ['admin'] },
 ];
@@ -2239,6 +2242,653 @@ function BanniereAbonnement({ clinique, session, onRenew }) {
   );
 }
 
+
+// ========== RAPPORT JOURNALIER ==========
+function RapportJournalierPage({ session, clinique, profil }) {
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const tk = session?.access_token;
+  const role = profil.role;
+
+  const load = async () => {
+    setLoading(true);
+    const debut = `${date}T00:00:00`;
+    const fin = `${date}T23:59:59`;
+
+    const proms = [];
+
+    // Consultations du jour
+    if (['admin','secretaire'].includes(role)) {
+      proms.push(dbAPI.get('consultations', `clinique_id=eq.${clinique.id}&date_consultation=gte.${debut}&date_consultation=lte.${fin}`, tk));
+    } else proms.push(Promise.resolve([]));
+
+    // Analyses du jour
+    if (['admin','secretaire'].includes(role)) {
+      proms.push(dbAPI.get('analyses', `clinique_id=eq.${clinique.id}&date_prescription=gte.${debut}&date_prescription=lte.${fin}`, tk));
+    } else proms.push(Promise.resolve([]));
+
+    // Ventes du jour
+    if (['admin','pharmacien'].includes(role)) {
+      proms.push(dbAPI.get('ventes', `clinique_id=eq.${clinique.id}&date_vente=gte.${debut}&date_vente=lte.${fin}`, tk));
+    } else proms.push(Promise.resolve([]));
+
+    // Factures du jour
+    if (['admin','caissier'].includes(role)) {
+      proms.push(dbAPI.get('factures', `clinique_id=eq.${clinique.id}&date_facture=gte.${debut}&date_facture=lte.${fin}`, tk));
+    } else proms.push(Promise.resolve([]));
+
+    const [consultations, analyses, ventes, factures] = await Promise.all(proms);
+
+    const consArr = Array.isArray(consultations) ? consultations : [];
+    const analyArr = Array.isArray(analyses) ? analyses : [];
+    const ventArr = Array.isArray(ventes) ? ventes : [];
+    const factArr = Array.isArray(factures) ? factures : [];
+
+    setData({
+      consultations: consArr,
+      analyses: analyArr,
+      ventes: ventArr,
+      factures: factArr,
+      totalVentes: ventArr.reduce((a, v) => a + (v.montant_total || 0), 0),
+      totalFactures: factArr.filter(f => f.statut === 'payee').reduce((a, f) => a + (f.montant_total || 0), 0),
+      totalImpaye: factArr.filter(f => f.statut === 'impayee').reduce((a, f) => a + (f.montant_total || 0), 0),
+    });
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [date]);
+
+  const Section = ({ title, children, color = 'var(--accent)' }) => (
+    <div className="card" style={{ borderTop: `3px solid ${color}` }}>
+      <div className="card-header"><span className="card-title">{title}</span></div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1 }}>
+          📋 Rapport du jour
+        </div>
+        <input type="date" className="form-input" style={{ width: 180 }} value={date} onChange={e => setDate(e.target.value)} />
+        <button className="btn btn-primary btn-sm" onClick={load}>🔄 Actualiser</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => window.print()}>🖨️ Imprimer</button>
+      </div>
+
+      {loading && <div className="loading"><span className="spinner spinner-dark" /> Chargement du rapport...</div>}
+
+      {data && !loading && (
+        <>
+          {/* Résumé global admin */}
+          {role === 'admin' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 20 }}>
+              <div className="stat-card blue"><div className="stat-icon">🩺</div><div className="stat-value">{data.consultations.length}</div><div className="stat-label">Consultations</div></div>
+              <div className="stat-card orange"><div className="stat-icon">🔬</div><div className="stat-value">{data.analyses.length}</div><div className="stat-label">Analyses</div></div>
+              <div className="stat-card green"><div className="stat-icon">💊</div><div className="stat-value">{fmtMoney(data.totalVentes)}</div><div className="stat-label">Ventes pharmacie</div></div>
+              <div className="stat-card purple"><div className="stat-icon">💰</div><div className="stat-value">{fmtMoney(data.totalFactures)}</div><div className="stat-label">Encaissements</div></div>
+            </div>
+          )}
+
+          {/* Consultations */}
+          {['admin','secretaire'].includes(role) && (
+            <Section title={`🩺 Consultations du jour (${data.consultations.length})`} color="var(--accent2)">
+              {data.consultations.length === 0
+                ? <div className="empty"><div className="empty-icon">🩺</div><p>Aucune consultation aujourd'hui</p></div>
+                : <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+                    <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent)' }}>{data.consultations.filter(c => c.statut === 'termine').length}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>Terminées</div>
+                    </div>
+                    <div style={{ background: 'rgba(14,165,233,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent2)' }}>{data.consultations.filter(c => c.statut === 'en_cours').length}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>En cours</div>
+                    </div>
+                    <div style={{ background: 'rgba(245,158,11,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent3)' }}>{data.consultations.filter(c => c.statut === 'suivi_requis').length}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>Suivi requis</div>
+                    </div>
+                  </div>
+                  <table className="table">
+                    <thead><tr><th>Heure</th><th>Motif</th><th>Diagnostic</th><th>Statut</th></tr></thead>
+                    <tbody>{data.consultations.map(c => (
+                      <tr key={c.id}>
+                        <td style={{ fontSize: 12 }}>{new Date(c.date_consultation).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
+                        <td>{c.motif}</td>
+                        <td><strong>{c.diagnostic}</strong></td>
+                        <td><span className="badge" style={{ background: c.statut === 'termine' ? 'rgba(0,200,150,0.1)' : 'rgba(245,158,11,0.1)', color: c.statut === 'termine' ? 'var(--accent)' : 'var(--accent3)' }}>{c.statut === 'termine' ? '✅ Terminé' : c.statut === 'suivi_requis' ? '🔁 Suivi' : '⏳ En cours'}</span></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </>
+              }
+            </Section>
+          )}
+
+          {/* Analyses */}
+          {['admin','secretaire'].includes(role) && (
+            <Section title={`🔬 Analyses du jour (${data.analyses.length})`} color="var(--accent2)">
+              {data.analyses.length === 0
+                ? <div className="empty"><div className="empty-icon">🔬</div><p>Aucune analyse aujourd'hui</p></div>
+                : <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+                    {[['Prescrites', 'prescrit', 'var(--accent2)'], ['En attente', 'en_attente', 'var(--accent3)'], ['Résultats reçus', 'resultat_recu', 'var(--accent)']].map(([label, statut, color]) => (
+                      <div key={statut} style={{ background: `${color}11`, borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                        <div style={{ fontSize: 22, fontWeight: 700, color }}>{data.analyses.filter(a => a.statut === statut).length}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <table className="table">
+                    <thead><tr><th>Analyse</th><th>Type</th><th>Statut</th></tr></thead>
+                    <tbody>{data.analyses.map(a => (
+                      <tr key={a.id}>
+                        <td><strong>{a.nom}</strong></td>
+                        <td><span className="tag" style={{ background: a.type === 'interne' ? 'rgba(0,200,150,0.1)' : 'rgba(14,165,233,0.1)', color: a.type === 'interne' ? 'var(--accent)' : 'var(--accent2)' }}>{a.type === 'interne' ? '🏥 Interne' : '🔗 Externe'}</span></td>
+                        <td><span className="badge" style={{ background: a.statut === 'resultat_recu' ? 'rgba(0,200,150,0.1)' : 'rgba(245,158,11,0.1)', color: a.statut === 'resultat_recu' ? 'var(--accent)' : 'var(--accent3)' }}>{a.statut === 'resultat_recu' ? '✅ Reçu' : a.statut === 'en_attente' ? '⏳ Attente' : '📋 Prescrit'}</span></td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </>
+              }
+            </Section>
+          )}
+
+          {/* Ventes pharmacie */}
+          {['admin','pharmacien'].includes(role) && (
+            <Section title={`💊 Ventes pharmacie du jour`} color="var(--accent)">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+                <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent)' }}>{data.ventes.length}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Transactions</div>
+                </div>
+                <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)' }}>{fmtMoney(data.totalVentes)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Total encaissé</div>
+                </div>
+                <div style={{ background: 'rgba(14,165,233,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent2)' }}>{data.ventes.filter(v => v.mode_paiement === 'mobile_money').length}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Mobile Money</div>
+                </div>
+              </div>
+              {data.ventes.length === 0
+                ? <div className="empty"><div className="empty-icon">💊</div><p>Aucune vente aujourd'hui</p></div>
+                : <table className="table">
+                  <thead><tr><th>Heure</th><th>Montant</th><th>Paiement</th></tr></thead>
+                  <tbody>{data.ventes.map(v => (
+                    <tr key={v.id}>
+                      <td style={{ fontSize: 12 }}>{new Date(v.date_vente).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td><strong>{fmtMoney(v.montant_total)}</strong></td>
+                      <td>{v.mode_paiement === 'especes' ? '💵 Espèces' : v.mode_paiement === 'mobile_money' ? '📱 Mobile Money' : v.mode_paiement}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              }
+            </Section>
+          )}
+
+          {/* Encaissements caissier */}
+          {['admin','caissier'].includes(role) && (
+            <Section title={`🧾 Encaissements du jour`} color="var(--purple)">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+                <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)' }}>{fmtMoney(data.totalFactures)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Total encaissé</div>
+                </div>
+                <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--danger)' }}>{fmtMoney(data.totalImpaye)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Impayés</div>
+                </div>
+                <div style={{ background: 'rgba(139,92,246,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--purple)' }}>{data.factures.length}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Factures</div>
+                </div>
+              </div>
+              {data.factures.length === 0
+                ? <div className="empty"><div className="empty-icon">🧾</div><p>Aucune facture aujourd'hui</p></div>
+                : <table className="table">
+                  <thead><tr><th>N° Facture</th><th>Total</th><th>Paiement</th><th>Statut</th></tr></thead>
+                  <tbody>{data.factures.map(f => (
+                    <tr key={f.id}>
+                      <td><span className="tag" style={{ background: 'rgba(14,165,233,0.1)', color: 'var(--accent2)' }}>{f.numero_facture}</span></td>
+                      <td><strong>{fmtMoney(f.montant_total)}</strong></td>
+                      <td>{f.mode_paiement === 'especes' ? '💵' : '📱'} {f.mode_paiement}</td>
+                      <td><span className="badge" style={{ background: f.statut === 'payee' ? 'rgba(0,200,150,0.1)' : 'rgba(239,68,68,0.1)', color: f.statut === 'payee' ? 'var(--accent)' : 'var(--danger)' }}>{f.statut === 'payee' ? '✅ Payée' : '⏳ Impayée'}</span></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              }
+            </Section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ========== STATISTIQUES ==========
+function StatistiquesPage({ session, clinique }) {
+  const [periode, setPeriode] = useState('mois');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const tk = session?.access_token;
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const now = new Date();
+      let debut;
+      if (periode === 'semaine') { debut = new Date(now - 7 * 86400000); }
+      else if (periode === 'mois') { debut = new Date(now.getFullYear(), now.getMonth(), 1); }
+      else { debut = new Date(now.getFullYear(), 0, 1); }
+      const debutStr = debut.toISOString();
+
+      const [patients, consultations, analyses, ventes, factures, meds] = await Promise.all([
+        dbAPI.get('patients', `clinique_id=eq.${clinique.id}&created_at=gte.${debutStr}&select=id,created_at`, tk),
+        dbAPI.get('consultations', `clinique_id=eq.${clinique.id}&created_at=gte.${debutStr}&select=id,diagnostic,statut,created_at`, tk),
+        dbAPI.get('analyses', `clinique_id=eq.${clinique.id}&created_at=gte.${debutStr}&select=id,nom,type,statut`, tk),
+        dbAPI.get('ventes', `clinique_id=eq.${clinique.id}&created_at=gte.${debutStr}&select=id,montant_total,created_at`, tk),
+        dbAPI.get('factures', `clinique_id=eq.${clinique.id}&created_at=gte.${debutStr}&select=id,montant_total,statut`, tk),
+        dbAPI.get('medicaments', `clinique_id=eq.${clinique.id}&select=id,nom,stock_actuel,stock_minimum,prix_unitaire`, tk),
+      ]);
+
+      const pArr = Array.isArray(patients) ? patients : [];
+      const cArr = Array.isArray(consultations) ? consultations : [];
+      const aArr = Array.isArray(analyses) ? analyses : [];
+      const vArr = Array.isArray(ventes) ? ventes : [];
+      const fArr = Array.isArray(factures) ? factures : [];
+      const mArr = Array.isArray(meds) ? meds : [];
+
+      // Top diagnostics
+      const diagCount = {};
+      cArr.forEach(c => { if (c.diagnostic) diagCount[c.diagnostic] = (diagCount[c.diagnostic] || 0) + 1; });
+      const topDiags = Object.entries(diagCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+      // Revenus par jour
+      const revenusParJour = {};
+      fArr.filter(f => f.statut === 'payee').forEach(f => {
+        const jour = f.created_at?.split('T')[0] || '';
+        revenusParJour[jour] = (revenusParJour[jour] || 0) + (f.montant_total || 0);
+      });
+
+      // Médicaments critiques
+      const medsCritiques = mArr.filter(m => m.stock_actuel <= m.stock_minimum).sort((a, b) => a.stock_actuel - b.stock_actuel);
+
+      setData({
+        totalPatients: pArr.length,
+        totalConsultations: cArr.length,
+        totalAnalyses: aArr.length,
+        analyseInterne: aArr.filter(a => a.type === 'interne').length,
+        analyseExterne: aArr.filter(a => a.type === 'externe').length,
+        totalVentes: vArr.reduce((s, v) => s + (v.montant_total || 0), 0),
+        totalRevenu: fArr.filter(f => f.statut === 'payee').reduce((s, f) => s + (f.montant_total || 0), 0),
+        totalImpaye: fArr.filter(f => f.statut === 'impayee').reduce((s, f) => s + (f.montant_total || 0), 0),
+        topDiags,
+        revenusParJour,
+        medsCritiques: medsCritiques.slice(0, 5),
+        stockValeur: mArr.reduce((s, m) => s + (m.stock_actuel * m.prix_unitaire), 0),
+      });
+      setLoading(false);
+    };
+    load();
+  }, [periode, clinique.id, tk]);
+
+  const maxDiag = data?.topDiags?.[0]?.[1] || 1;
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, flex: 1 }}>📊 Statistiques</div>
+        <div className="tabs-bar" style={{ marginBottom: 0 }}>
+          {[['semaine', 'Cette semaine'], ['mois', 'Ce mois'], ['annee', 'Cette année']].map(([v, l]) => (
+            <button key={v} className={`tab-btn ${periode === v ? 'active' : ''}`} onClick={() => setPeriode(v)}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {loading && <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>}
+
+      {data && !loading && (
+        <>
+          {/* KPIs principaux */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 20 }}>
+            <div className="stat-card green"><div className="stat-icon">👥</div><div className="stat-value">{data.totalPatients}</div><div className="stat-label">Nouveaux patients</div></div>
+            <div className="stat-card blue"><div className="stat-icon">🩺</div><div className="stat-value">{data.totalConsultations}</div><div className="stat-label">Consultations</div></div>
+            <div className="stat-card purple"><div className="stat-icon">💰</div><div className="stat-value">{fmtMoney(data.totalRevenu)}</div><div className="stat-label">Revenus encaissés</div></div>
+            <div className="stat-card orange"><div className="stat-icon">⏳</div><div className="stat-value">{fmtMoney(data.totalImpaye)}</div><div className="stat-label">Impayés</div></div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            {/* Top diagnostics */}
+            <div className="card">
+              <div className="card-header"><span className="card-title">🏥 Top diagnostics</span></div>
+              {data.topDiags.length === 0
+                ? <div className="empty"><div className="empty-icon">🔍</div><p>Pas de données</p></div>
+                : data.topDiags.map(([diag, count], i) => (
+                  <div key={diag} style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 13 }}>
+                      <span style={{ fontWeight: i === 0 ? 700 : 400 }}>{i + 1}. {diag}</span>
+                      <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{count} cas</span>
+                    </div>
+                    <div className="stock-bar">
+                      <div className="stock-fill" style={{ width: `${Math.round((count / maxDiag) * 100)}%`, background: i === 0 ? 'var(--danger)' : i <= 2 ? 'var(--accent3)' : 'var(--accent2)' }} />
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+
+            {/* Analyses */}
+            <div className="card">
+              <div className="card-header"><span className="card-title">🔬 Analyses</span></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 14, textAlign: 'center' }}>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--accent)' }}>{data.analyseInterne}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>🏥 Internes</div>
+                </div>
+                <div style={{ background: 'rgba(14,165,233,0.08)', borderRadius: 8, padding: 14, textAlign: 'center' }}>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--accent2)' }}>{data.analyseExterne}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>🔗 Externes</div>
+                </div>
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 13 }}>
+                  <span>Internes</span><span>{data.totalAnalyses > 0 ? Math.round((data.analyseInterne / data.totalAnalyses) * 100) : 0}%</span>
+                </div>
+                <div className="stock-bar" style={{ height: 10 }}>
+                  <div className="stock-fill" style={{ width: `${data.totalAnalyses > 0 ? Math.round((data.analyseInterne / data.totalAnalyses) * 100) : 0}%`, background: 'var(--accent)' }} />
+                </div>
+              </div>
+              <div className="card-header" style={{ marginBottom: 8 }}><span className="card-title">💊 Stock pharmacie</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 13 }}>Valeur totale stock</span>
+                <strong style={{ color: 'var(--accent)' }}>{fmtMoney(data.stockValeur)}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                <span style={{ fontSize: 13 }}>Médicaments en alerte</span>
+                <strong style={{ color: 'var(--danger)' }}>{data.medsCritiques.length}</strong>
+              </div>
+            </div>
+          </div>
+
+          {/* Revenus par jour */}
+          <div className="card">
+            <div className="card-header"><span className="card-title">💰 Revenus — détail par jour</span></div>
+            {Object.keys(data.revenusParJour).length === 0
+              ? <div className="empty"><div className="empty-icon">💰</div><p>Aucun revenu sur cette période</p></div>
+              : <table className="table">
+                <thead><tr><th>Date</th><th>Revenus encaissés</th></tr></thead>
+                <tbody>
+                  {Object.entries(data.revenusParJour).sort((a, b) => b[0].localeCompare(a[0])).map(([jour, montant]) => (
+                    <tr key={jour}>
+                      <td>{fmtDate(jour)}</td>
+                      <td><strong style={{ color: 'var(--accent)' }}>{fmtMoney(montant)}</strong></td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: 'rgba(0,200,150,0.05)' }}>
+                    <td><strong>TOTAL</strong></td>
+                    <td><strong style={{ color: 'var(--accent)', fontSize: 16 }}>{fmtMoney(data.totalRevenu)}</strong></td>
+                  </tr>
+                </tbody>
+              </table>
+            }
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ========== RH ==========
+function RHPage({ session, clinique }) {
+  const [onglet, setOnglet] = useState('employes');
+  const [employes, setEmployes] = useState([]);
+  const [profils, setProfils] = useState([]);
+  const [conges, setConges] = useState([]);
+  const [avances, setAvances] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState('');
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const tk = session?.access_token;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [e, p, c, a] = await Promise.all([
+      dbAPI.get('rh_employes', `clinique_id=eq.${clinique.id}`, tk),
+      dbAPI.get('profils', `clinique_id=eq.${clinique.id}`, tk),
+      dbAPI.get('rh_conges', `clinique_id=eq.${clinique.id}&order=created_at.desc`, tk),
+      dbAPI.get('rh_avances', `clinique_id=eq.${clinique.id}&order=created_at.desc`, tk),
+    ]);
+    if (Array.isArray(e)) setEmployes(e);
+    if (Array.isArray(p)) setProfils(p);
+    if (Array.isArray(c)) setConges(c);
+    if (Array.isArray(a)) setAvances(a);
+    setLoading(false);
+  }, [clinique.id, tk]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const getProfil = (id) => profils.find(p => p.id === id);
+  const getEmploye = (profilId) => employes.find(e => e.profil_id === profilId);
+
+  const openModal = (type, data = {}) => { setModalType(type); setForm(data); setShowModal(true); };
+
+  const save = async () => {
+    setSaving(true);
+    if (modalType === 'employe') {
+      const existing = employes.find(e => e.profil_id === form.profil_id);
+      if (existing) {
+        await dbAPI.patch('rh_employes', `id=eq.${existing.id}`, { salaire_base: parseFloat(form.salaire_base) || 0, date_embauche: form.date_embauche, type_contrat: form.type_contrat }, tk);
+      } else {
+        await dbAPI.post('rh_employes', { clinique_id: clinique.id, profil_id: form.profil_id, salaire_base: parseFloat(form.salaire_base) || 0, date_embauche: form.date_embauche, type_contrat: form.type_contrat || 'cdi' }, tk);
+      }
+    } else if (modalType === 'conge') {
+      await dbAPI.post('rh_conges', { clinique_id: clinique.id, profil_id: form.profil_id, date_debut: form.date_debut, date_fin: form.date_fin, type: form.type || 'annuel', motif: form.motif, statut: 'en_attente' }, tk);
+    } else if (modalType === 'avance') {
+      await dbAPI.post('rh_avances', { clinique_id: clinique.id, profil_id: form.profil_id, montant: parseFloat(form.montant) || 0, date_avance: form.date_avance || new Date().toISOString().split('T')[0], motif: form.motif, statut: 'accordee' }, tk);
+    }
+    await load(); setShowModal(false); setSaving(false);
+  };
+
+  const validerConge = async (id, statut) => {
+    await dbAPI.patch('rh_conges', `id=eq.${id}`, { statut }, tk);
+    await load();
+  };
+
+  const totalSalaires = employes.reduce((s, e) => s + (e.salaire_base || 0), 0);
+  const totalAvances = avances.filter(a => a.statut === 'accordee').reduce((s, a) => s + (a.montant || 0), 0);
+  const congesEnAttente = conges.filter(c => c.statut === 'en_attente').length;
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 20 }}>
+        <div className="stat-card blue"><div className="stat-icon">👥</div><div className="stat-value">{profils.length}</div><div className="stat-label">Employés</div></div>
+        <div className="stat-card green"><div className="stat-icon">💰</div><div className="stat-value">{fmtMoney(totalSalaires)}</div><div className="stat-label">Masse salariale</div></div>
+        <div className="stat-card orange"><div className="stat-icon">✈️</div><div className="stat-value">{congesEnAttente}</div><div className="stat-label">Congés en attente</div></div>
+        <div className="stat-card purple"><div className="stat-icon">💸</div><div className="stat-value">{fmtMoney(totalAvances)}</div><div className="stat-label">Avances accordées</div></div>
+      </div>
+
+      <div className="tabs-bar">
+        {[['employes','👥 Employés & Salaires'],['conges','✈️ Congés'],['avances','💸 Avances']].map(([v,l]) => (
+          <button key={v} className={`tab-btn ${onglet===v?'active':''}`} onClick={() => setOnglet(v)}>{l}</button>
+        ))}
+      </div>
+
+      {loading && <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>}
+
+      {!loading && onglet === 'employes' && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">👥 Employés & Salaires</span>
+            <button className="btn btn-primary btn-sm" onClick={() => openModal('employe', { type_contrat: 'cdi' })}>+ Fiche salariale</button>
+          </div>
+          {profils.length === 0
+            ? <div className="empty"><div className="empty-icon">👥</div><p>Aucun employé</p></div>
+            : <table className="table">
+              <thead><tr><th>Employé</th><th>Rôle</th><th>Contrat</th><th>Date embauche</th><th>Salaire base</th><th>Actions</th></tr></thead>
+              <tbody>{profils.map(p => {
+                const emp = getEmploye(p.id);
+                const ri = ROLES[p.role] || { label: p.role, color: '#6b7280' };
+                return (
+                  <tr key={p.id}>
+                    <td><div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><div className="avatar" style={{ background: ri.color, width: 32, height: 32, fontSize: 11 }}>{mkAvatar(`${p.nom} ${p.prenom || ''}`)}</div><strong>{p.prenom} {p.nom}</strong></div></td>
+                    <td><span className="badge" style={{ background: `${ri.color}22`, color: ri.color }}>{ri.label}</span></td>
+                    <td>{emp?.type_contrat?.toUpperCase() || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{emp?.date_embauche ? fmtDate(emp.date_embauche) : '—'}</td>
+                    <td><strong style={{ color: emp ? 'var(--accent)' : 'var(--text3)' }}>{emp ? fmtMoney(emp.salaire_base) : 'Non défini'}</strong></td>
+                    <td>
+                      <button className="btn btn-secondary btn-sm" onClick={() => openModal('employe', { profil_id: p.id, salaire_base: emp?.salaire_base || '', date_embauche: emp?.date_embauche || '', type_contrat: emp?.type_contrat || 'cdi' })}>✏️ {emp ? 'Modifier' : 'Définir'}</button>
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          }
+        </div>
+      )}
+
+      {!loading && onglet === 'conges' && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">✈️ Gestion des congés</span>
+            <button className="btn btn-primary btn-sm" onClick={() => openModal('conge', { type: 'annuel' })}>+ Demande de congé</button>
+          </div>
+          {conges.length === 0
+            ? <div className="empty"><div className="empty-icon">✈️</div><p>Aucune demande de congé</p></div>
+            : <table className="table">
+              <thead><tr><th>Employé</th><th>Type</th><th>Du</th><th>Au</th><th>Durée</th><th>Motif</th><th>Statut</th><th>Actions</th></tr></thead>
+              <tbody>{conges.map(c => {
+                const p = getProfil(c.profil_id);
+                const duree = c.date_debut && c.date_fin ? Math.ceil((new Date(c.date_fin) - new Date(c.date_debut)) / 86400000) + 1 : '—';
+                return (
+                  <tr key={c.id}>
+                    <td>{p ? `${p.prenom} ${p.nom}` : '—'}</td>
+                    <td><span className="badge" style={{ background: 'rgba(139,92,246,0.1)', color: 'var(--purple)' }}>{c.type}</span></td>
+                    <td style={{ fontSize: 12 }}>{fmtDate(c.date_debut)}</td>
+                    <td style={{ fontSize: 12 }}>{fmtDate(c.date_fin)}</td>
+                    <td>{duree} j</td>
+                    <td style={{ fontSize: 12 }}>{c.motif || '—'}</td>
+                    <td>
+                      <span className="badge" style={{ background: c.statut === 'approuve' ? 'rgba(0,200,150,0.1)' : c.statut === 'refuse' ? 'rgba(239,68,68,0.1)' : 'rgba(245,158,11,0.1)', color: c.statut === 'approuve' ? 'var(--accent)' : c.statut === 'refuse' ? 'var(--danger)' : 'var(--accent3)' }}>
+                        {c.statut === 'approuve' ? '✅ Approuvé' : c.statut === 'refuse' ? '❌ Refusé' : '⏳ En attente'}
+                      </span>
+                    </td>
+                    <td>
+                      {c.statut === 'en_attente' && (
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button className="btn btn-primary btn-sm" onClick={() => validerConge(c.id, 'approuve')}>✅</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => validerConge(c.id, 'refuse')}>❌</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          }
+        </div>
+      )}
+
+      {!loading && onglet === 'avances' && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">💸 Avances sur salaire</span>
+            <button className="btn btn-primary btn-sm" onClick={() => openModal('avance', {})}>+ Nouvelle avance</button>
+          </div>
+          {avances.length === 0
+            ? <div className="empty"><div className="empty-icon">💸</div><p>Aucune avance</p></div>
+            : <table className="table">
+              <thead><tr><th>Employé</th><th>Montant</th><th>Date</th><th>Motif</th><th>Statut</th></tr></thead>
+              <tbody>{avances.map(a => {
+                const p = getProfil(a.profil_id);
+                return (
+                  <tr key={a.id}>
+                    <td>{p ? `${p.prenom} ${p.nom}` : '—'}</td>
+                    <td><strong style={{ color: 'var(--accent3)' }}>{fmtMoney(a.montant)}</strong></td>
+                    <td style={{ fontSize: 12 }}>{fmtDate(a.date_avance)}</td>
+                    <td style={{ fontSize: 12 }}>{a.motif || '—'}</td>
+                    <td><span className="badge" style={{ background: 'rgba(0,200,150,0.1)', color: 'var(--accent)' }}>✅ Accordée</span></td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          }
+        </div>
+      )}
+
+      {showModal && (
+        <Modal title={modalType === 'employe' ? '💰 Fiche salariale' : modalType === 'conge' ? '✈️ Demande de congé' : '💸 Avance sur salaire'} onClose={() => setShowModal(false)} footer={
+          <><button className="btn btn-secondary" onClick={() => setShowModal(false)}>Annuler</button>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>{saving && <span className="spinner" />} Enregistrer</button></>
+        }>
+          {modalType === 'employe' && (
+            <>
+              <div className="form-group"><label className="form-label">Employé *</label>
+                <select className="form-select" value={form.profil_id || ''} onChange={e => setForm(f => ({ ...f, profil_id: e.target.value }))}>
+                  <option value="">— Sélectionner —</option>
+                  {profils.map(p => <option key={p.id} value={p.id}>{p.prenom} {p.nom} — {ROLES[p.role]?.label}</option>)}
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Salaire de base (FCFA) *</label><input className="form-input" type="number" value={form.salaire_base || ''} onChange={e => setForm(f => ({ ...f, salaire_base: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Type de contrat</label>
+                  <select className="form-select" value={form.type_contrat || 'cdi'} onChange={e => setForm(f => ({ ...f, type_contrat: e.target.value }))}>
+                    <option value="cdi">CDI</option><option value="cdd">CDD</option><option value="stage">Stage</option><option value="vacataire">Vacataire</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-group"><label className="form-label">Date d'embauche</label><input className="form-input" type="date" value={form.date_embauche || ''} onChange={e => setForm(f => ({ ...f, date_embauche: e.target.value }))} /></div>
+            </>
+          )}
+          {modalType === 'conge' && (
+            <>
+              <div className="form-group"><label className="form-label">Employé *</label>
+                <select className="form-select" value={form.profil_id || ''} onChange={e => setForm(f => ({ ...f, profil_id: e.target.value }))}>
+                  <option value="">— Sélectionner —</option>
+                  {profils.map(p => <option key={p.id} value={p.id}>{p.prenom} {p.nom}</option>)}
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Date début *</label><input className="form-input" type="date" value={form.date_debut || ''} onChange={e => setForm(f => ({ ...f, date_debut: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Date fin *</label><input className="form-input" type="date" value={form.date_fin || ''} onChange={e => setForm(f => ({ ...f, date_fin: e.target.value }))} /></div>
+              </div>
+              <div className="form-group"><label className="form-label">Type</label>
+                <select className="form-select" value={form.type || 'annuel'} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>
+                  <option value="annuel">Congé annuel</option><option value="maladie">Congé maladie</option><option value="maternite">Congé maternité</option><option value="exceptionnel">Congé exceptionnel</option>
+                </select>
+              </div>
+              <div className="form-group"><label className="form-label">Motif</label><textarea className="form-textarea" value={form.motif || ''} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} /></div>
+            </>
+          )}
+          {modalType === 'avance' && (
+            <>
+              <div className="form-group"><label className="form-label">Employé *</label>
+                <select className="form-select" value={form.profil_id || ''} onChange={e => setForm(f => ({ ...f, profil_id: e.target.value }))}>
+                  <option value="">— Sélectionner —</option>
+                  {profils.map(p => {
+                    const emp = getEmploye(p.id);
+                    return <option key={p.id} value={p.id}>{p.prenom} {p.nom} {emp ? `— Salaire: ${fmtMoney(emp.salaire_base)}` : ''}</option>;
+                  })}
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Montant (FCFA) *</label><input className="form-input" type="number" value={form.montant || ''} onChange={e => setForm(f => ({ ...f, montant: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Date</label><input className="form-input" type="date" value={form.date_avance || new Date().toISOString().split('T')[0]} onChange={e => setForm(f => ({ ...f, date_avance: e.target.value }))} /></div>
+              </div>
+              <div className="form-group"><label className="form-label">Motif</label><textarea className="form-textarea" value={form.motif || ''} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} /></div>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+
 // ========== BANNIERE ABONNEMENT ==========
 // ========== APP PRINCIPAL ==========
 
@@ -2395,18 +3045,21 @@ export default function App() {
                 onRenew={() => setShowPaiement(true)}
               />
             )}
-            {page === 'dashboard' && <DashboardPage session={session} clinique={clinique} profil={profil} />}
-            {page === 'patients' && <PatientsPage session={session} clinique={clinique} onConsult={lancerConsultation} profil={profil} />}
+            {page === 'dashboard'    && <DashboardPage session={session} clinique={clinique} profil={profil} />}
+            {page === 'rapport'      && <RapportJournalierPage session={session} clinique={clinique} profil={profil} />}
+            {page === 'statistiques' && <StatistiquesPage session={session} clinique={clinique} />}
+            {page === 'patients'     && <PatientsPage session={session} clinique={clinique} onConsult={lancerConsultation} profil={profil} />}
             {page === 'consultations' && (profil.role === 'secretaire' || profil.role === 'infirmier'
               ? <PointConsultationsPage session={session} clinique={clinique} profil={profil} />
               : <ConsultationsPage session={session} clinique={clinique} patientInitial={patientPourConsult} onClearPatient={() => setPatientPourConsult(null)} profil={profil} />
             )}
-            {page === 'analyses' && <AnalysesPage session={session} clinique={clinique} profil={profil} />}
-            {page === 'rdv' && <RendezVousPage session={session} clinique={clinique} />}
-            {page === 'pharmacie' && <PharmaciePage session={session} clinique={clinique} profil={profil} />}
-            {page === 'facturation' && <FacturationPage session={session} clinique={clinique} />}
-            {page === 'equipe' && <EquipePage session={session} clinique={clinique} />}
-            {page === 'parametres' && <ParametresPage session={session} clinique={clinique} profil={profil} onCliniqueUpdate={(c) => setClinique(c)} />}
+            {page === 'analyses'     && <AnalysesPage session={session} clinique={clinique} profil={profil} />}
+            {page === 'rdv'          && <RendezVousPage session={session} clinique={clinique} />}
+            {page === 'pharmacie'    && <PharmaciePage session={session} clinique={clinique} profil={profil} />}
+            {page === 'facturation'  && <FacturationPage session={session} clinique={clinique} />}
+            {page === 'rh'           && <RHPage session={session} clinique={clinique} />}
+            {page === 'equipe'       && <EquipePage session={session} clinique={clinique} />}
+            {page === 'parametres'   && <ParametresPage session={session} clinique={clinique} profil={profil} onCliniqueUpdate={(c) => setClinique(c)} />}
           </div>
         </div>
 
