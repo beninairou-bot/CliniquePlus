@@ -685,6 +685,7 @@ function DossierPatient({ patient, session, clinique, onBack, onConsult }) {
           <div className="info-row"><span className="info-label">Groupe sanguin</span><span className="info-value"><strong style={{ color: 'var(--danger)' }}>{patient.groupe_sanguin || '—'}</strong></span></div>
           <div className="info-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
             <span className="info-label">Allergies</span>
+            <button onClick={handleLogout} style={{background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'var(--danger)',padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'var(--font-body)',fontWeight:500}}>↪ Déconnexion</button>
             <span className="info-value" style={{ color: patient.allergies ? 'var(--danger)' : 'var(--text3)' }}>{patient.allergies || 'Aucune allergie connue'}</span>
           </div>
           <div className="info-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
