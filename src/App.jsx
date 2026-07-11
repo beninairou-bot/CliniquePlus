@@ -147,7 +147,7 @@ const STYLES = `
   .nav-item:hover{background:var(--surface2);color:var(--text);}
   .nav-item.active{background:rgba(0,200,150,0.1);color:var(--accent);font-weight:600;}
   .nav-icon{font-size:16px;width:20px;text-align:center;}
-  .sidebar-footer{padding:12px;border-top:1px solid var(--border);}
+  .sidebar-footer{padding:12px;border-top:1px solid var(--border);flex-shrink:0;}
   .user-card{display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface2);border-radius:10px;cursor:pointer;transition:all 0.15s;}
   .user-card:hover{background:rgba(239,68,68,0.05);}
   .avatar{border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0;}
