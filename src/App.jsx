@@ -20,6 +20,32 @@ const saveSession = (s) => { try { localStorage.setItem(SESSION_KEY, JSON.string
 const loadSession = () => { try { const s = localStorage.getItem(SESSION_KEY); return s ? JSON.parse(s) : null; } catch(e) { return null; } };
 const clearSession = () => { try { localStorage.removeItem(SESSION_KEY); } catch(e) {} };
 
+const FEDAPAY_PUBLIC_KEY = 'pk_live_YcTfyy-ZSIXCKtFznAyGoxdB';
+
+// Journal de traçabilité
+const logAction = async (cliniqueId, profil, action, module, details, token) => {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/journal_actions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${token}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
+        clinique_id: cliniqueId,
+        profil_id: profil?.id,
+        profil_nom: `${profil?.prenom || ''} ${profil?.nom || ''}`.trim(),
+        profil_role: profil?.role,
+        action,
+        module,
+        details,
+      })
+    });
+  } catch(e) {}
+};
+
 const sbFetch = async (path, options = {}, token = SUPABASE_ANON_KEY) => {
   const r = await fetch(`${SUPABASE_URL}${path}`, {
     ...options,
@@ -52,11 +78,11 @@ const dbAPI = {
 // ===== FEDAPAY & TARIFS =====
 
 const TARIFS = {
-  cabinet:      { montant: 15000 },
-  clinique:     { montant: 20000 },
-  hopital:      { montant: 25000 },
-  polyclinique: { montant: 25000 },
-  centre_sante: { montant: 25000 },
+  cabinet:      { montant: 10000 },
+  clinique:     { montant: 15000 },
+  hopital:      { montant: 20000 },
+  polyclinique: { montant: 20000 },
+  centre_sante: { montant: 20000 },
 };
 const getTarif = (type) => TARIFS[type] || { montant: 15000 };
 
@@ -116,6 +142,7 @@ const NAV_ITEMS = [
   { id: 'pharmacie',     label: 'Pharmacie',        icon: '💊', roles: ['admin','pharmacien'] },
   { id: 'facturation',   label: 'Facturation',      icon: '🧾', roles: ['admin','caissier','secretaire'] },
   { id: 'rh',            label: 'Ressources Humaines',icon: '👔',roles: ['admin'] },
+  { id: 'journal',       label: 'Journal activités', icon: '📓', roles: ['admin'] },
   { id: 'equipe',        label: 'Équipe',            icon: '👨‍⚕️',roles: ['admin'] },
   { id: 'parametres',    label: 'Paramètres',       icon: '⚙️', roles: ['admin'] },
 ];
@@ -948,7 +975,7 @@ function SynthesePDF({ consultation, patient, clinique, analyses, lignes, ordonn
 
 // ========== CONSULTATIONS ==========
 
-function ConsultationsPage({ session, clinique, patientInitial, onClearPatient }) {
+function ConsultationsPage({ session, clinique, patientInitial, onClearPatient, profil }) {
   const [patients, setPatients] = useState([]);
   const [meds, setMeds] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(patientInitial || null);
@@ -993,13 +1020,19 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient }
     if (m) updLigne(i, 'dosage', m.dosage || '');
   };
 
+  const peutDiagnostiquer = !profil || ['admin','medecin'].includes(profil.role);
+
   const save = async () => {
     if (!selectedPatient) { setError('Sélectionnez un patient.'); return; }
-    if (!form.motif || !form.diagnostic) { setError('Le motif et le diagnostic sont obligatoires.'); return; }
+    if (!form.motif) { setError('Le motif est obligatoire.'); return; }
+    if (peutDiagnostiquer && !form.diagnostic) { setError('Le diagnostic est obligatoire.'); return; }
     setSaving(true); setError('');
     try {
-      const consultRes = await dbAPI.post('consultations', {
+      const dataConsult = {
         ...form,
+        diagnostic: peutDiagnostiquer ? form.diagnostic : '(En attente du médecin)',
+        conduite_a_tenir: peutDiagnostiquer ? form.conduite_a_tenir : '',
+        recommandations: peutDiagnostiquer ? form.recommandations : '',
         patient_id: selectedPatient.id,
         clinique_id: clinique.id,
         medecin_id: session.user?.id,
@@ -1008,14 +1041,21 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient }
         taille: form.taille ? parseFloat(form.taille) : null,
         pouls: form.pouls ? parseInt(form.pouls) : null,
         saturation: form.saturation ? parseInt(form.saturation) : null,
-      }, token);
+      };
+      const consultRes = await dbAPI.post('consultations', dataConsult, token);
       const consult = Array.isArray(consultRes) ? consultRes[0] : consultRes;
       if (!consult?.id) { setError('Erreur création consultation.'); setSaving(false); return; }
+
+      // Journal de traçabilité
+      await logAction(clinique.id, profil, 'Création consultation', 'consultations',
+        `Patient: ${selectedPatient.nom} ${selectedPatient.prenom || ''} | Motif: ${form.motif}`, token);
 
       if (analyses.length > 0) {
         for (const a of analyses) {
           if (a.nom) await dbAPI.post('analyses', { ...a, consultation_id: consult.id, clinique_id: clinique.id }, token);
         }
+        await logAction(clinique.id, profil, 'Analyses prescrites', 'analyses',
+          `${analyses.filter(a=>a.nom).length} analyse(s) pour ${selectedPatient.nom}`, token);
       }
 
       if (ordoLignes.length > 0) {
@@ -1026,6 +1066,8 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient }
             if (l.medicament_nom) await dbAPI.post('ordonnance_lignes', { ...l, ordonnance_id: ordo.id, quantite: parseInt(l.quantite) || 1 }, token);
           }
         }
+        await logAction(clinique.id, profil, 'Ordonnance créée', 'consultations',
+          `${ordoLignes.filter(l=>l.medicament_nom).length} médicament(s) prescrit(s)`, token);
       }
 
       setSaved(true);
@@ -1089,12 +1131,20 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient }
         <div className="card-header"><span className="card-title">🔍 Consultation</span></div>
         <div className="form-group"><label className="form-label">Motif de consultation *</label><input className="form-input" placeholder="Ex: Fièvre depuis 3 jours" value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} /></div>
         <div className="form-group"><label className="form-label">Examen clinique</label><textarea className="form-textarea" placeholder="Observations de l'examen physique..." value={form.examen_clinique} onChange={e => setForm(f => ({ ...f, examen_clinique: e.target.value }))} /></div>
-        <div className="form-row">
-          <div className="form-group"><label className="form-label">Diagnostic *</label><input className="form-input" placeholder="Ex: Paludisme simple" value={form.diagnostic} onChange={e => setForm(f => ({ ...f, diagnostic: e.target.value }))} /></div>
-          <div className="form-group"><label className="form-label">Code CIM-10</label><input className="form-input" placeholder="Ex: B54" value={form.code_cim10} onChange={e => setForm(f => ({ ...f, code_cim10: e.target.value }))} /></div>
-        </div>
-        <div className="form-group"><label className="form-label">Conduite à tenir</label><textarea className="form-textarea" value={form.conduite_a_tenir} onChange={e => setForm(f => ({ ...f, conduite_a_tenir: e.target.value }))} /></div>
-        <div className="form-group"><label className="form-label">Recommandations</label><textarea className="form-textarea" value={form.recommandations} onChange={e => setForm(f => ({ ...f, recommandations: e.target.value }))} /></div>
+        {peutDiagnostiquer ? (
+          <>
+            <div className="form-row">
+              <div className="form-group"><label className="form-label">Diagnostic *</label><input className="form-input" placeholder="Ex: Paludisme simple" value={form.diagnostic} onChange={e => setForm(f => ({ ...f, diagnostic: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Code CIM-10</label><input className="form-input" placeholder="Ex: B54" value={form.code_cim10} onChange={e => setForm(f => ({ ...f, code_cim10: e.target.value }))} /></div>
+            </div>
+            <div className="form-group"><label className="form-label">Conduite à tenir</label><textarea className="form-textarea" value={form.conduite_a_tenir} onChange={e => setForm(f => ({ ...f, conduite_a_tenir: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">Recommandations</label><textarea className="form-textarea" value={form.recommandations} onChange={e => setForm(f => ({ ...f, recommandations: e.target.value }))} /></div>
+          </>
+        ) : (
+          <div className="alert alert-info" style={{ marginBottom: 0 }}>
+            🔒 Le diagnostic et la conduite à tenir sont réservés au médecin. Vous pouvez renseigner les constantes, l'examen clinique, les analyses et l'ordonnance.
+          </div>
+        )}
         <div className="form-group"><label className="form-label">Statut</label>
           <select className="form-select" value={form.statut} onChange={e => setForm(f => ({ ...f, statut: e.target.value }))}>
             <option value="termine">Terminé</option>
@@ -1191,7 +1241,7 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient }
 
 // ========== RENDEZ-VOUS ==========
 
-function RendezVousPage({ session, clinique }) {
+function RendezVousPage({ session, clinique, profil }) {
   const [rdvs, setRdvs] = useState([]);
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1217,6 +1267,8 @@ function RendezVousPage({ session, clinique }) {
     if (!form.patient_id || !form.date_heure) return;
     setSaving(true);
     await dbAPI.post('rendez_vous', { ...form, clinique_id: clinique.id }, token);
+    await logAction(clinique.id, profil, 'Rendez-vous créé', 'rdv',
+      `Date: ${form.date_heure} | Motif: ${form.motif || 'N/A'}`, token);
     await load();
     setShowModal(false);
     setForm({ patient_id: '', date_heure: '', motif: '', statut: 'planifie', notes: '' });
@@ -1290,7 +1342,7 @@ function RendezVousPage({ session, clinique }) {
 
 // ========== PHARMACIE ==========
 
-function PharmaciePage({ session, clinique }) {
+function PharmaciePage({ session, clinique, profil }) {
   const [meds, setMeds] = useState([]);
   const [mouvements, setMouvements] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1337,6 +1389,62 @@ function PharmaciePage({ session, clinique }) {
     setSaving(false);
   };
 
+  const [showVente, setShowVente] = useState(false);
+  const [venteL, setVenteL] = useState([{medicament_id:'',medicament_nom:'',quantite:1,prix_unitaire:0}]);
+  const [venteMode, setVenteMode] = useState('especes');
+  const [ventePatient, setVentePatient] = useState('');
+  const [patients, setPatients] = useState([]);
+  const [venteSaved, setVenteSaved] = useState(false);
+
+  useEffect(() => {
+    const loadPats = async () => {
+      const p = await dbAPI.get('patients', `clinique_id=eq.${clinique.id}&order=nom.asc`, token);
+      if (Array.isArray(p)) setPatients(p);
+    };
+    loadPats();
+  }, [clinique.id, token]);
+
+  const addVL = () => setVenteL(v => [...v, {medicament_id:'',medicament_nom:'',quantite:1,prix_unitaire:0}]);
+  const updVL = (i,k,v) => setVenteL(l => l.map((x,idx) => idx===i ? {...x,[k]:v} : x));
+  const fillVL = (i,id) => { const m=meds.find(x=>x.id===id); if(m){updVL(i,'medicament_id',id);updVL(i,'medicament_nom',m.nom);updVL(i,'prix_unitaire',m.prix_unitaire);} };
+  const totalVente = venteL.reduce((a,l) => a+(l.quantite*l.prix_unitaire),0);
+
+  const doVente = async () => {
+    const lines = venteL.filter(l => l.medicament_id && l.quantite > 0);
+    if(lines.length === 0) return;
+    setSaving(true);
+    const vr = await dbAPI.post('ventes', {
+      clinique_id: clinique.id,
+      patient_id: ventePatient || null,
+      montant_total: totalVente,
+      mode_paiement: venteMode,
+      statut: 'paye'
+    }, token);
+    const v = Array.isArray(vr) ? vr[0] : vr;
+    if(v?.id) {
+      for(const l of lines) {
+        await dbAPI.post('vente_lignes', {
+          vente_id: v.id,
+          medicament_id: l.medicament_id,
+          quantite: parseInt(l.quantite),
+          prix_unitaire: l.prix_unitaire
+        }, token);
+        const med = meds.find(x => x.id === l.medicament_id);
+        if(med) await dbAPI.patch('medicaments', `id=eq.${l.medicament_id}`,
+          {stock_actuel: Math.max(0, med.stock_actuel - parseInt(l.quantite))}, token);
+      }
+      await logAction(clinique.id, profil, 'Vente pharmacie', 'pharmacie',
+        `${lines.length} médicament(s) — Total: ${fmtMoney(totalVente)} — Mode: ${venteMode}`, token);
+    }
+    await load();
+    setShowVente(false);
+    setVenteL([{medicament_id:'',medicament_nom:'',quantite:1,prix_unitaire:0}]);
+    setVentePatient('');
+    setVenteSaved(true);
+    setTimeout(() => setVenteSaved(false), 4000);
+    setSaving(false);
+  };
+
   const filtered = meds.filter(m => `${m.nom} ${m.forme || ''} ${m.categorie || ''}`.toLowerCase().includes(search.toLowerCase()));
   const totalValeur = meds.reduce((acc, m) => acc + (m.stock_actuel * m.prix_unitaire), 0);
   const alertes = meds.filter(m => m.stock_actuel <= m.stock_minimum);
@@ -1350,9 +1458,18 @@ function PharmaciePage({ session, clinique }) {
         <div className="stat-card red"><div className="stat-icon">⚠️</div><div className="stat-value">{alertes.length}</div><div className="stat-label">Alertes stock bas</div><div className="stat-sub" style={{ color: 'var(--danger)' }}>{ruptures.length} en rupture</div></div>
       </div>
 
+      {venteSaved && <div className="alert alert-success">✅ Vente enregistrée ! Stock mis à jour automatiquement.</div>}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button className="btn btn-primary" style={{ fontSize: 14, padding: '10px 20px' }} onClick={() => setShowVente(true)}>
+          🛒 Nouvelle vente
+        </button>
+      </div>
+
       <div className="tabs-bar">
         <button className={`tab-btn ${onglet === 'stock' ? 'active' : ''}`} onClick={() => setOnglet('stock')}>📦 Stock</button>
         <button className={`tab-btn ${onglet === 'alertes' ? 'active' : ''}`} onClick={() => setOnglet('alertes')}>⚠️ Alertes ({alertes.length})</button>
+        <button className={`tab-btn ${onglet === 'ventes' ? 'active' : ''}`} onClick={() => setOnglet('ventes')}>💰 Historique ventes</button>
       </div>
 
       {onglet === 'stock' && (
@@ -1447,6 +1564,61 @@ function PharmaciePage({ session, clinique }) {
             <div className="form-group"><label className="form-label">Date expiration</label><input className="form-input" type="date" value={form.date_expiration} onChange={e => setForm(f => ({ ...f, date_expiration: e.target.value }))} /></div>
           </div>
           <div className="form-group"><label className="form-label">Fournisseur</label><input className="form-input" value={form.fournisseur} onChange={e => setForm(f => ({ ...f, fournisseur: e.target.value }))} /></div>
+        </Modal>
+      )}
+
+
+      {/* Modal nouvelle vente */}
+      {showVente && (
+        <Modal title="🛒 Nouvelle vente" onClose={() => setShowVente(false)} large footer={
+          <><button className="btn btn-secondary" onClick={() => setShowVente(false)}>Annuler</button>
+            <button className="btn btn-primary" onClick={doVente} disabled={saving}>{saving && <span className="spinner"/>} Confirmer ({fmtMoney(totalVente)})</button></>
+        }>
+          <div className="alert alert-info">ℹ️ Saisissez les médicaments vendus. Le stock sera déduit automatiquement.</div>
+          <div className="form-row" style={{ marginBottom: 16 }}>
+            <div className="form-group"><label className="form-label">Patient (optionnel)</label>
+              <select className="form-select" value={ventePatient} onChange={e => setVentePatient(e.target.value)}>
+                <option value="">— Vente anonyme —</option>
+                {patients.map(p => <option key={p.id} value={p.id}>{p.nom} {p.prenom || ''}</option>)}
+              </select>
+            </div>
+            <div className="form-group"><label className="form-label">Mode de paiement</label>
+              <select className="form-select" value={venteMode} onChange={e => setVenteMode(e.target.value)}>
+                <option value="especes">💵 Espèces</option>
+                <option value="mobile_money">📱 Mobile Money</option>
+                <option value="carte">💳 Carte</option>
+                <option value="assurance">🏥 Assurance</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>Médicaments vendus :</span>
+              <button className="btn btn-secondary btn-sm" onClick={addVL}>+ Ajouter</button>
+            </div>
+            {venteL.map((l, i) => (
+              <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8, background: 'var(--surface2)' }}>
+                <div className="form-row" style={{ marginBottom: 8 }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Médicament</label>
+                    <select className="form-select" value={l.medicament_id} onChange={e => fillVL(i, e.target.value)}>
+                      <option value="">— Sélectionner —</option>
+                      {meds.map(m => <option key={m.id} value={m.id}>{m.nom} {m.dosage || ''} — Stock:{m.stock_actuel} — {fmtMoney(m.prix_unitaire)}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Quantité</label>
+                    <input className="form-input" type="number" min="1" value={l.quantite} onChange={e => updVL(i, 'quantite', parseInt(e.target.value) || 1)} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: 'var(--accent)' }}>Sous-total : <strong>{fmtMoney(l.quantite * l.prix_unitaire)}</strong></span>
+                  <button className="btn btn-danger btn-sm" onClick={() => setVenteL(v => v.filter((_, idx) => idx !== i))}>🗑️</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="alert alert-success" style={{ fontSize: 15, fontWeight: 700 }}>💰 Total : {fmtMoney(totalVente)}</div>
         </Modal>
       )}
 
@@ -1944,6 +2116,8 @@ function AnalysesPage({ session, clinique, profil }) {
         statut: a.statut,
         date_resultat: a.statut === 'resultat_recu' ? new Date().toISOString() : null,
       }, tk);
+      await logAction(clinique.id, profil, 'Résultat analyse saisi', 'analyses',
+        `Analyse: ${a.nom} | Statut: ${a.statut} | Résultat: ${a.resultat || 'N/A'}`, tk);
     }
     await load();
     setEditAnalyse(null);
@@ -2892,6 +3066,99 @@ function RHPage({ session, clinique }) {
 // ========== BANNIERE ABONNEMENT ==========
 // ========== APP PRINCIPAL ==========
 
+
+// ========== JOURNAL DES ACTIVITES ==========
+function JournalPage({ session, clinique }) {
+  const [journal, setJournal] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterRole, setFilterRole] = useState('');
+  const [filterModule, setFilterModule] = useState('');
+  const [search, setSearch] = useState('');
+  const tk = session?.access_token;
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const d = await dbAPI.get('journal_actions',
+        `clinique_id=eq.${clinique.id}&order=created_at.desc&limit=200`, tk);
+      if (Array.isArray(d)) setJournal(d);
+      setLoading(false);
+    };
+    load();
+  }, [clinique.id, tk]);
+
+  const filtered = journal.filter(j => {
+    const matchRole = !filterRole || j.profil_role === filterRole;
+    const matchModule = !filterModule || j.module === filterModule;
+    const matchSearch = !search || `${j.profil_nom} ${j.action} ${j.details || ''}`.toLowerCase().includes(search.toLowerCase());
+    return matchRole && matchModule && matchSearch;
+  });
+
+  const modules = [...new Set(journal.map(j => j.module).filter(Boolean))];
+  const roles = [...new Set(journal.map(j => j.profil_role).filter(Boolean))];
+
+  const moduleColor = (m) => ({
+    consultations: 'var(--accent2)',
+    analyses: 'var(--purple)',
+    pharmacie: 'var(--accent)',
+    rdv: 'var(--accent3)',
+    facturation: 'var(--danger)',
+  }[m] || 'var(--text3)');
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 20 }}>
+        <div className="stat-card blue"><div className="stat-icon">📓</div><div className="stat-value">{journal.length}</div><div className="stat-label">Actions totales</div></div>
+        <div className="stat-card green"><div className="stat-icon">👤</div><div className="stat-value">{new Set(journal.map(j => j.profil_id)).size}</div><div className="stat-label">Utilisateurs actifs</div></div>
+        <div className="stat-card orange"><div className="stat-icon">📅</div><div className="stat-value">{journal.filter(j => j.created_at?.startsWith(new Date().toISOString().split('T')[0])).length}</div><div className="stat-label">Actions aujourd'hui</div></div>
+        <div className="stat-card purple"><div className="stat-icon">🔧</div><div className="stat-value">{modules.length}</div><div className="stat-label">Modules utilisés</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">📓 Journal des activités</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input className="search-input" placeholder="🔍 Rechercher..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 180 }} />
+            <select className="form-select" style={{ width: 'auto', padding: '8px 12px', fontSize: 13 }} value={filterRole} onChange={e => setFilterRole(e.target.value)}>
+              <option value="">Tous les rôles</option>
+              {roles.map(r => <option key={r} value={r}>{ROLES[r]?.label || r}</option>)}
+            </select>
+            <select className="form-select" style={{ width: 'auto', padding: '8px 12px', fontSize: 13 }} value={filterModule} onChange={e => setFilterModule(e.target.value)}>
+              <option value="">Tous les modules</option>
+              {modules.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {loading ? <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>
+          : filtered.length === 0 ? <div className="empty"><div className="empty-icon">📓</div><p>Aucune action enregistrée</p></div>
+            : <table className="table">
+              <thead><tr><th>Date & Heure</th><th>Utilisateur</th><th>Rôle</th><th>Action</th><th>Module</th><th>Détails</th></tr></thead>
+              <tbody>{filtered.map(j => {
+                const ri = ROLES[j.profil_role] || { label: j.profil_role, color: '#6b7280' };
+                return (
+                  <tr key={j.id}>
+                    <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>
+                      {j.created_at ? new Date(j.created_at).toLocaleDateString('fr-FR') : '—'}<br />
+                      <strong>{j.created_at ? new Date(j.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}</strong>
+                    </td>
+                    <td><strong>{j.profil_nom || '—'}</strong></td>
+                    <td><span className="badge" style={{ background: `${ri.color}22`, color: ri.color }}>{ri.label}</span></td>
+                    <td style={{ fontSize: 13 }}>{j.action}</td>
+                    <td>
+                      {j.module && <span className="tag" style={{ background: `${moduleColor(j.module)}22`, color: moduleColor(j.module) }}>{j.module}</span>}
+                    </td>
+                    <td style={{ fontSize: 12, color: 'var(--text2)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.details || '—'}</td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+        }
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [profil, setProfil] = useState(null);
@@ -3055,10 +3322,11 @@ export default function App() {
               : <ConsultationsPage session={session} clinique={clinique} patientInitial={patientPourConsult} onClearPatient={() => setPatientPourConsult(null)} profil={profil} />
             )}
             {page === 'analyses'     && <AnalysesPage session={session} clinique={clinique} profil={profil} />}
-            {page === 'rdv'          && <RendezVousPage session={session} clinique={clinique} />}
+            {page === 'rdv'          && <RendezVousPage session={session} clinique={clinique} profil={profil} />}
             {page === 'pharmacie'    && <PharmaciePage session={session} clinique={clinique} profil={profil} />}
             {page === 'facturation'  && <FacturationPage session={session} clinique={clinique} />}
             {page === 'rh'           && <RHPage session={session} clinique={clinique} />}
+            {page === 'journal'      && <JournalPage session={session} clinique={clinique} />}
             {page === 'equipe'       && <EquipePage session={session} clinique={clinique} />}
             {page === 'parametres'   && <ParametresPage session={session} clinique={clinique} profil={profil} onCliniqueUpdate={(c) => setClinique(c)} />}
           </div>
