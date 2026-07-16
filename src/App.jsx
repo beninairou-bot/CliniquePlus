@@ -120,9 +120,9 @@ const ROLES = {
 const ACCES = {
   admin:      { patients:'write', consultations:'write', rdv:'write', pharmacie:'write', facturation:'write', equipe:'write', parametres:'write', analyses:'write' },
   medecin:    { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
-  secretaire: { patients:'write', consultations:'point', rdv:'write', pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:'point' },
+  secretaire: { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:'write' },
   pharmacien: { patients:false,   consultations:false,   rdv:false,   pharmacie:'write', facturation:false,   equipe:false,   parametres:false,  analyses:false   },
-  infirmier:  { patients:'read',  consultations:'read',  rdv:'read',  pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:false   },
+  infirmier:  { patients:'write', consultations:'write', rdv:'read',  pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
   caissier:   { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:false   },
   laborantin: { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
 };
@@ -1342,6 +1342,81 @@ function RendezVousPage({ session, clinique, profil }) {
 
 // ========== PHARMACIE ==========
 
+
+// Composant historique ventes pharmacie
+function VentesHistoriqueSection({ clinique, token, fmtMoney, fmtDate }) {
+  const [ventes, setVentes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [periode, setPeriode] = useState('jour');
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const now = new Date();
+      let debut;
+      if (periode === 'jour') debut = new Date(now.toISOString().split('T')[0] + 'T00:00:00');
+      else if (periode === 'semaine') debut = new Date(now - 7 * 86400000);
+      else debut = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const v = await sbFetch(
+        `/rest/v1/ventes?clinique_id=eq.${clinique.id}&date_vente=gte.${debut.toISOString()}&order=date_vente.desc&select=*`,
+        {}, token
+      );
+      if (Array.isArray(v)) setVentes(v);
+      setLoading(false);
+    };
+    load();
+  }, [clinique.id, token, periode]);
+
+  const total = ventes.reduce((s, v) => s + (v.montant_total || 0), 0);
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <span className="card-title">💰 Historique des ventes</span>
+        <div className="tabs-bar" style={{ marginBottom: 0 }}>
+          {[['jour','Aujourd'hui'],['semaine','Cette semaine'],['mois','Ce mois']].map(([v,l]) => (
+            <button key={v} className={`tab-btn ${periode===v?'active':''}`} onClick={() => setPeriode(v)} style={{ padding: '6px 12px', fontSize: 12 }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 16 }}>
+        <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--accent)' }}>{ventes.length}</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>Transactions</div>
+        </div>
+        <div style={{ background: 'rgba(0,200,150,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--accent)' }}>{fmtMoney(total)}</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>Total encaissé</div>
+        </div>
+        <div style={{ background: 'rgba(14,165,233,0.08)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--accent2)' }}>{ventes.filter(v => v.mode_paiement === 'mobile_money').length}</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)' }}>Mobile Money</div>
+        </div>
+      </div>
+
+      {loading ? <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>
+        : ventes.length === 0 ? <div className="empty"><div className="empty-icon">💊</div><p>Aucune vente sur cette période</p></div>
+          : <table className="table">
+            <thead><tr><th>Date & Heure</th><th>Montant</th><th>Mode paiement</th><th>Statut</th></tr></thead>
+            <tbody>{ventes.map(v => (
+              <tr key={v.id}>
+                <td style={{ fontSize: 12 }}>
+                  <strong>{new Date(v.date_vente).toLocaleDateString('fr-FR')}</strong><br />
+                  {new Date(v.date_vente).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                </td>
+                <td><strong style={{ color: 'var(--accent)', fontSize: 15 }}>{fmtMoney(v.montant_total)}</strong></td>
+                <td>{v.mode_paiement === 'especes' ? '💵 Espèces' : v.mode_paiement === 'mobile_money' ? '📱 Mobile Money' : v.mode_paiement === 'carte' ? '💳 Carte' : '🏥 Assurance'}</td>
+                <td><span className="badge" style={{ background: 'rgba(0,200,150,0.1)', color: 'var(--accent)' }}>✅ Payée</span></td>
+              </tr>
+            ))}</tbody>
+          </table>
+      }
+    </div>
+  );
+}
+
 function PharmaciePage({ session, clinique, profil }) {
   const [meds, setMeds] = useState([]);
   const [mouvements, setMouvements] = useState([]);
@@ -1540,6 +1615,10 @@ function PharmaciePage({ session, clinique, profil }) {
             })
           }
         </div>
+      )}
+
+      {onglet === 'ventes' && (
+        <VentesHistoriqueSection clinique={clinique} token={session?.access_token} fmtMoney={fmtMoney} fmtDate={fmtDate} />
       )}
 
       {showModal && (
@@ -3317,9 +3396,8 @@ export default function App() {
             {page === 'rapport'      && <RapportJournalierPage session={session} clinique={clinique} profil={profil} />}
             {page === 'statistiques' && <StatistiquesPage session={session} clinique={clinique} />}
             {page === 'patients'     && <PatientsPage session={session} clinique={clinique} onConsult={lancerConsultation} profil={profil} />}
-            {page === 'consultations' && (profil.role === 'secretaire' || profil.role === 'infirmier'
-              ? <PointConsultationsPage session={session} clinique={clinique} profil={profil} />
-              : <ConsultationsPage session={session} clinique={clinique} patientInitial={patientPourConsult} onClearPatient={() => setPatientPourConsult(null)} profil={profil} />
+            {page === 'consultations' && (
+              <ConsultationsPage session={session} clinique={clinique} patientInitial={patientPourConsult} onClearPatient={() => setPatientPourConsult(null)} profil={profil} />
             )}
             {page === 'analyses'     && <AnalysesPage session={session} clinique={clinique} profil={profil} />}
             {page === 'rdv'          && <RendezVousPage session={session} clinique={clinique} profil={profil} />}
