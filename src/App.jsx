@@ -1375,7 +1375,7 @@ function VentesHistoriqueSection({ clinique, token, fmtMoney, fmtDate }) {
       <div className="card-header">
         <span className="card-title">💰 Historique des ventes</span>
         <div className="tabs-bar" style={{ marginBottom: 0 }}>
-          {[['jour','Aujourd'hui'],['semaine','Cette semaine'],['mois','Ce mois']].map(([v,l]) => (
+          {[["jour","Aujourd'hui"],["semaine","Cette semaine"],["mois","Ce mois"]].map(([v,l]) => (
             <button key={v} className={`tab-btn ${periode===v?'active':''}`} onClick={() => setPeriode(v)} style={{ padding: '6px 12px', fontSize: 12 }}>{l}</button>
           ))}
         </div>
