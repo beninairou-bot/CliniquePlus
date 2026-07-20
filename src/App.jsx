@@ -324,10 +324,10 @@ const Spinner = ({ dark }) => <span className={`spinner ${dark ? 'spinner-dark' 
 // ========== AUTH ==========
 
 const plans = [
-  { id: 'starter', nom: 'Starter', prix: '20 000 FCFA/mois', desc: 'Cabinets & petites cliniques' },
-  { id: 'pro', nom: 'Pro', prix: '60 000 FCFA/mois', desc: 'Cliniques & polycliniques' },
-  { id: 'institution', nom: 'Institution', prix: '120 000 FCFA/mois', desc: 'Hôpitaux & réseaux' },
-  { id: 'pilote', nom: 'Pilote', prix: 'Gratuit 3 mois', desc: 'Clinique pilote partenaire' },
+  { id: 'cabinet', nom: 'Cabinet médical', prix: '10 000 FCFA/mois', desc: 'Pour cabinets médicaux' },
+  { id: 'clinique', nom: 'Clinique', prix: '15 000 FCFA/mois', desc: 'Pour cliniques' },
+  { id: 'hopital', nom: 'Hôpital / Polyclinique', prix: '20 000 FCFA/mois', desc: 'Pour hôpitaux et polycliniques' },
+  { id: 'centre_sante', nom: 'Centre de santé', prix: '20 000 FCFA/mois', desc: 'Pour centres de santé' },
 ];
 
 function LoginForm({ onLogin, onRegister, onReset }) {
