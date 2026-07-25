@@ -137,7 +137,7 @@ const NAV_ITEMS = [
   { id: 'statistiques',  label: 'Statistiques',     icon: '📈', roles: ['admin','medecin'] },
   { id: 'patients',      label: 'Patients',         icon: '👥', roles: ['admin','medecin','secretaire','infirmier'] },
   { id: 'consultations', label: 'Consultations',    icon: '🩺', roles: ['admin','medecin','secretaire','infirmier'] },
-  { id: 'analyses',      label: 'Analyses',         icon: '🔬', roles: ['admin','medecin','secretaire','laborantin'] },
+  { id: 'analyses',      label: 'Analyses',         icon: '🔬', roles: ['admin','medecin','secretaire','infirmier','laborantin'] },
   { id: 'rdv',           label: 'Rendez-vous',      icon: '📅', roles: ['admin','medecin','secretaire'] },
   { id: 'pharmacie',     label: 'Pharmacie',        icon: '💊', roles: ['admin','pharmacien'] },
   { id: 'facturation',   label: 'Facturation',      icon: '🧾', roles: ['admin','caissier','secretaire'] },
@@ -330,7 +330,282 @@ const plans = [
   { id: 'centre_sante', nom: 'Centre de santé', prix: '20 000 FCFA/mois', desc: 'Pour centres de santé' },
 ];
 
-function LoginForm({ onLogin, onRegister, onReset }) {
+
+
+// ========== PAGE TARIFS PUBLIQUE ==========
+function PageTarifs({ onBack }) {
+  const tarifs = [
+    {
+      type: 'Cabinet médical',
+      icon: '🏥',
+      prix: 10000,
+      color: '#0ea5e9',
+      features: [
+        'Dossiers patients illimités',
+        'Consultations & ordonnances',
+        'Gestion des analyses',
+        'Rapport journalier',
+        '2 utilisateurs inclus',
+      ]
+    },
+    {
+      type: 'Clinique',
+      icon: '🏨',
+      prix: 15000,
+      color: '#00c896',
+      popular: true,
+      features: [
+        'Tout du plan Cabinet',
+        'Pharmacie & stock',
+        'Facturation complète',
+        'Statistiques avancées',
+        '5 utilisateurs inclus',
+        'Ressources humaines',
+      ]
+    },
+    {
+      type: 'Hôpital / Polyclinique',
+      icon: '🏦',
+      prix: 20000,
+      color: '#8b5cf6',
+      features: [
+        'Tout du plan Clinique',
+        'Journal des activités',
+        'Multi-départements',
+        'Utilisateurs illimités',
+        'Support prioritaire',
+      ]
+    },
+    {
+      type: 'Centre de santé',
+      icon: '💊',
+      prix: 20000,
+      color: '#f97316',
+      features: [
+        'Tout du plan Clinique',
+        'Adapté aux centres communautaires',
+        'Utilisateurs illimités',
+        'Rapports bailleurs',
+        'Support prioritaire',
+      ]
+    },
+  ];
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '0 0 40px' }}>
+      {/* Header */}
+      <div style={{ background: 'linear-gradient(135deg, #1a202c 0%, #2d3748 100%)', padding: '40px 24px', textAlign: 'center', color: '#fff' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 800, marginBottom: 8 }}>
+          🏥 CliniPlus
+        </div>
+        <div style={{ fontSize: 18, opacity: 0.85, marginBottom: 6 }}>
+          Gestion clinique intelligente pour l'Afrique de l'Ouest
+        </div>
+        <div style={{ fontSize: 14, opacity: 0.6 }}>
+          1 mois gratuit • Aucune carte bancaire requise • Paiement MTN & Moov Money
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16, maxWidth: 600, margin: '-24px auto 32px', padding: '0 16px' }}>
+        {[['🏥','Multi-structures','Cliniques, cabinets, hôpitaux'],['👥','Multi-rôles','7 rôles distincts'],['📱','Mobile Money','MTN & Moov']].map(([icon, titre, desc]) => (
+          <div key={titre} style={{ background: '#fff', borderRadius: 12, padding: '16px 12px', textAlign: 'center', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}>
+            <div style={{ fontSize: 24, marginBottom: 6 }}>{icon}</div>
+            <div style={{ fontWeight: 700, fontSize: 13 }}>{titre}</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{desc}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tarifs */}
+      <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 16px' }}>
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700 }}>Nos tarifs</div>
+          <div style={{ color: 'var(--text3)', fontSize: 13, marginTop: 6 }}>Choisissez le plan adapté à votre structure</div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 16, marginBottom: 32 }}>
+          {tarifs.map(t => (
+            <div key={t.type} style={{
+              background: '#fff',
+              borderRadius: 16,
+              padding: 24,
+              border: `2px solid ${t.popular ? t.color : 'var(--border)'}`,
+              position: 'relative',
+              boxShadow: t.popular ? `0 8px 32px ${t.color}33` : '0 2px 12px rgba(0,0,0,0.06)',
+            }}>
+              {t.popular && (
+                <div style={{ position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: t.color, color: '#fff', padding: '3px 14px', borderRadius: 20, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                  ⭐ PLUS POPULAIRE
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <div style={{ fontSize: 28 }}>{t.icon}</div>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>{t.type}</div>
+                  <div style={{ color: t.color, fontWeight: 800, fontSize: 20 }}>{(t.prix).toLocaleString('fr-FR')} FCFA<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text3)' }}>/mois</span></div>
+                </div>
+              </div>
+              <ul style={{ listStyle: 'none', padding: 0 }}>
+                {t.features.map(f => (
+                  <li key={f} style={{ fontSize: 13, padding: '4px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: t.color, fontWeight: 700 }}>✓</span> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Fonctionnalités communes */}
+        <div style={{ background: '#fff', borderRadius: 16, padding: 24, marginBottom: 24 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, marginBottom: 16, textAlign: 'center' }}>
+            🎁 Inclus dans tous les plans
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8 }}>
+            {['Dossiers patients complets','Consultations & diagnostics','Gestion des analyses','Rendez-vous & agenda','Rapport journalier','1 mois gratuit sans CB','Paiement Mobile Money','Support technique'].map(f => (
+              <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <span style={{ color: 'var(--accent)', fontWeight: 700 }}>✓</span> {f}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ textAlign: 'center' }}>
+          <button onClick={onBack} style={{
+            background: 'linear-gradient(135deg, #00c896, #0ea5e9)',
+            color: '#fff', border: 'none', padding: '14px 40px',
+            borderRadius: 12, fontSize: 15, fontWeight: 700,
+            cursor: 'pointer', fontFamily: 'var(--font-body)',
+            boxShadow: '0 4px 20px rgba(0,200,150,0.4)'
+          }}>
+            🚀 Commencer gratuitement
+          </button>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 10 }}>
+            1 mois gratuit • Aucune carte bancaire • Résiliable à tout moment
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ========== SLIDES ANIMATION ACCUEIL ==========
+function SlidesBanner() {
+  const [current, setCurrent] = useState(0);
+  const [animating, setAnimating] = useState(true);
+
+  const slides = [
+    {
+      icon: '🏥',
+      titre: 'CliniPlus',
+      sousTitre: 'Gestion clinique intelligente pour l'Afrique de l'Ouest',
+      couleur: '#00c896',
+      bg: 'linear-gradient(135deg, #00c896 0%, #0ea5e9 100%)',
+    },
+    {
+      icon: '👥',
+      titre: '+500 patients',
+      sousTitre: 'Dossiers médicaux complets, historique et suivi au fil du temps',
+      couleur: '#0ea5e9',
+      bg: 'linear-gradient(135deg, #0ea5e9 0%, #8b5cf6 100%)',
+    },
+    {
+      icon: '🩺',
+      titre: 'Consultations digitales',
+      sousTitre: 'Constantes, diagnostics, analyses, ordonnances — tout en un',
+      couleur: '#8b5cf6',
+      bg: 'linear-gradient(135deg, #8b5cf6 0%, #f97316 100%)',
+    },
+    {
+      icon: '💊',
+      titre: 'Pharmacie intelligente',
+      sousTitre: 'Stock en temps réel, alertes rupture, historique des ventes',
+      couleur: '#f97316',
+      bg: 'linear-gradient(135deg, #f97316 0%, #ef4444 100%)',
+    },
+    {
+      icon: '📊',
+      titre: 'Rapports & Statistiques',
+      sousTitre: 'Rapport journalier, top maladies, revenus par période',
+      couleur: '#ef4444',
+      bg: 'linear-gradient(135deg, #ef4444 0%, #00c896 100%)',
+    },
+    {
+      icon: '💰',
+      titre: 'Dès 10 000 FCFA/mois',
+      sousTitre: '1 mois gratuit • Aucune carte requise • MTN & Moov Money',
+      couleur: '#00c896',
+      bg: 'linear-gradient(135deg, #1a202c 0%, #2d3748 100%)',
+    },
+  ];
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setAnimating(false);
+      setTimeout(() => {
+        setCurrent(c => (c + 1) % slides.length);
+        setAnimating(true);
+      }, 300);
+    }, 3500);
+    return () => clearInterval(timer);
+  }, []);
+
+  const slide = slides[current];
+
+  return (
+    <div style={{
+      background: slide.bg,
+      borderRadius: 16,
+      padding: '28px 24px',
+      marginBottom: 24,
+      color: '#fff',
+      textAlign: 'center',
+      transition: 'all 0.3s ease',
+      opacity: animating ? 1 : 0,
+      transform: animating ? 'translateY(0)' : 'translateY(-8px)',
+      minHeight: 130,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Cercles décoratifs */}
+      <div style={{ position: 'absolute', top: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.08)' }} />
+      <div style={{ position: 'absolute', bottom: -15, left: -15, width: 60, height: 60, borderRadius: '50%', background: 'rgba(255,255,255,0.06)' }} />
+
+      <div style={{ fontSize: 36, marginBottom: 10 }}>{slide.icon}</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 800, marginBottom: 6, textShadow: '0 2px 8px rgba(0,0,0,0.2)' }}>
+        {slide.titre}
+      </div>
+      <div style={{ fontSize: 13, opacity: 0.9, lineHeight: 1.5, maxWidth: 320 }}>
+        {slide.sousTitre}
+      </div>
+
+      {/* Indicateurs de slides */}
+      <div style={{ display: 'flex', gap: 6, marginTop: 14 }}>
+        {slides.map((_, i) => (
+          <div
+            key={i}
+            onClick={() => setCurrent(i)}
+            style={{
+              width: i === current ? 20 : 6,
+              height: 6,
+              borderRadius: 3,
+              background: i === current ? '#fff' : 'rgba(255,255,255,0.4)',
+              cursor: 'pointer',
+              transition: 'all 0.3s ease',
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LoginForm({ onLogin, onRegister, onReset, onTarifs }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -363,6 +638,11 @@ function LoginForm({ onLogin, onRegister, onReset }) {
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <button className="link-btn" onClick={onReset}>Mot de passe oublié ?</button>
         <button className="link-btn" onClick={onRegister}>Créer une clinique</button>
+      </div>
+      <div style={{ textAlign: 'center', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+        <button className="link-btn" onClick={onTarifs} style={{ color: 'var(--accent2)', fontSize: 12 }}>
+          💰 Voir nos tarifs et fonctionnalités
+        </button>
       </div>
     </div>
   );
@@ -2170,7 +2450,7 @@ function AnalysesPage({ session, clinique, profil }) {
   const [saving, setSaving] = useState(false);
   const [filterStatut, setFilterStatut] = useState('');
   const tk = session?.access_token;
-  const canWrite = peutEcrire(profil.role, 'analyses') || profil.role === 'laborantin';
+  const canWrite = ['admin','medecin','secretaire','infirmier','laborantin'].includes(profil.role);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -3246,6 +3526,7 @@ export default function App() {
   const [view, setView] = useState('login');
   const [patientPourConsult, setPatientPourConsult] = useState(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [showTarifs, setShowTarifs] = useState(false);
   const [showPaiement, setShowPaiement] = useState(false);
 
   // Restaurer la session au chargement
@@ -3312,17 +3593,27 @@ export default function App() {
   }
 
   if (!session || !profil || !clinique) {
+    if (showTarifs) {
+      return (
+        <>
+          <style>{STYLES}</style>
+          <PageTarifs onBack={() => setShowTarifs(false)} />
+        </>
+      );
+    }
+
     return (
       <>
         <style>{STYLES}</style>
         <div className="login-page">
           <div className="login-card">
+            <SlidesBanner />
             <div className="logo-wrap">
               <div className="logo-icon" style={{ width: 56, height: 56, borderRadius: 16, fontSize: 22, margin: '0 auto 12px' }}>C+</div>
               <div className="logo-name">CliniPlus</div>
               <div className="logo-sub-text">Gestion clinique intelligente</div>
             </div>
-            {view === 'login' && <LoginForm onLogin={handleLogin} onRegister={() => setView('register')} onReset={() => setView('reset')} />}
+            {view === 'login' && <LoginForm onLogin={handleLogin} onRegister={() => setView('register')} onReset={() => setView('reset')} onTarifs={() => setShowTarifs(true)} />}
             {view === 'register' && <RegisterForm onLogin={handleLogin} onBack={() => setView('login')} />}
             {view === 'reset' && (
               <div>
