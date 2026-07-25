@@ -499,7 +499,7 @@ function SlidesBanner() {
     {
       icon: '🏥',
       titre: 'CliniPlus',
-      sousTitre: 'Gestion clinique intelligente pour l'Afrique de l'Ouest',
+      sousTitre: "Gestion clinique intelligente pour l'Afrique de l'Ouest",
       couleur: '#00c896',
       bg: 'linear-gradient(135deg, #00c896 0%, #0ea5e9 100%)',
     },
