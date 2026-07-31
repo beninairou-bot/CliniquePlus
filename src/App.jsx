@@ -106,25 +106,27 @@ const uploadLogo = async (file, cliniqueId, token) => {
   } catch { return null; }
 };
 const ROLES = {
-  admin:      { label: 'Administrateur', color: '#8b5cf6' },
-  medecin:    { label: 'Médecin',        color: '#0ea5e9' },
-  secretaire: { label: 'Secrétaire',     color: '#f59e0b' },
-  pharmacien: { label: 'Pharmacien',     color: '#00c896' },
-  infirmier:  { label: 'Infirmier(e)',   color: '#f97316' },
-  caissier:   { label: 'Caissier',       color: '#ef4444' },
-  laborantin: { label: 'Laborantin',     color: '#06b6d4' },
+  admin:       { label: 'Administrateur', color: '#8b5cf6' },
+  medecin:     { label: 'Médecin',        color: '#0ea5e9' },
+  secretaire:  { label: 'Secrétaire',     color: '#f59e0b' },
+  pharmacien:  { label: 'Pharmacien',     color: '#00c896' },
+  infirmier:   { label: 'Infirmier(e)',   color: '#f97316' },
+  caissier:    { label: 'Caissier',       color: '#ef4444' },
+  laborantin:  { label: 'Laborantin',     color: '#06b6d4' },
+  gynecologue: { label: 'Gynécologue',    color: '#ec4899' },
 };
 
 // Matrice des accès par rôle
 // write = accès complet | read = lecture seule | constantes = saisie constantes/analyses | pharmacie_only = pharmacien
 const ACCES = {
-  admin:      { patients:'write', consultations:'write', rdv:'write', pharmacie:'write', facturation:'write', equipe:'write', parametres:'write', analyses:'write' },
-  medecin:    { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
-  secretaire: { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:'write' },
-  pharmacien: { patients:false,   consultations:false,   rdv:false,   pharmacie:'write', facturation:false,   equipe:false,   parametres:false,  analyses:false   },
-  infirmier:  { patients:'write', consultations:'write', rdv:'read',  pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
-  caissier:   { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:false   },
-  laborantin: { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write' },
+  admin:       { patients:'write', consultations:'write', rdv:'write', pharmacie:'write', facturation:'write', equipe:'write', parametres:'write', analyses:'write',  maternite:'write' },
+  medecin:    { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write', maternite:'write' },
+  secretaire: { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:'write', maternite:'write' },
+  pharmacien: { patients:false,   consultations:false,   rdv:false,   pharmacie:'write', facturation:false,   equipe:false,   parametres:false,  analyses:false,   maternite:false   },
+  infirmier:  { patients:'write', consultations:'write', rdv:'read',  pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write', maternite:'write' },
+  caissier:   { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:'write', equipe:false,   parametres:false,  analyses:false,   maternite:false   },
+  laborantin:  { patients:false,   consultations:false,   rdv:false,   pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write',  maternite:false   },
+  gynecologue: { patients:'write', consultations:'write', rdv:'write', pharmacie:false,   facturation:false,   equipe:false,   parametres:false,  analyses:'write',  maternite:'write' },
 };
 
 const peutAcceder = (role, mod) => !!(ACCES[role]?.[mod]);
@@ -132,7 +134,7 @@ const peutEcrire  = (role, mod) => ACCES[role]?.[mod] === 'write';
 const estPoint    = (role, mod) => ACCES[role]?.[mod] === 'point';
 
 const NAV_ITEMS = [
-  { id: 'dashboard',     label: 'Tableau de bord', icon: '📊', roles: ['admin','medecin','secretaire','pharmacien','infirmier','caissier','laborantin'] },
+  { id: 'dashboard',     label: 'Tableau de bord', icon: '📊', roles: ['admin','medecin','secretaire','pharmacien','infirmier','caissier','laborantin','gynecologue'] },
   { id: 'rapport',       label: 'Rapport journalier',icon: '📋',roles: ['admin','secretaire','pharmacien','caissier'] },
   { id: 'statistiques',  label: 'Statistiques',     icon: '📈', roles: ['admin','medecin'] },
   { id: 'patients',      label: 'Patients',         icon: '👥', roles: ['admin','medecin','secretaire','infirmier'] },
@@ -141,6 +143,7 @@ const NAV_ITEMS = [
   { id: 'rdv',           label: 'Rendez-vous',      icon: '📅', roles: ['admin','medecin','secretaire'] },
   { id: 'pharmacie',     label: 'Pharmacie',        icon: '💊', roles: ['admin','pharmacien'] },
   { id: 'facturation',   label: 'Facturation',      icon: '🧾', roles: ['admin','caissier','secretaire'] },
+  { id: 'maternite',     label: 'Maternité',          icon: '🤰', roles: ['admin','medecin','infirmier','secretaire','gynecologue'] },
   { id: 'rh',            label: 'Ressources Humaines',icon: '👔',roles: ['admin'] },
   { id: 'journal',       label: 'Journal activités', icon: '📓', roles: ['admin'] },
   { id: 'equipe',        label: 'Équipe',            icon: '👨‍⚕️',roles: ['admin'] },
@@ -399,7 +402,7 @@ function PageTarifs({ onBack }) {
           🏥 CliniPlus
         </div>
         <div style={{ fontSize: 18, opacity: 0.85, marginBottom: 6 }}>
-          Gestion clinique intelligente pour l'Afrique de l'Ouest
+          Gestion clinique intelligente pour l\'Afrique de l\'Ouest
         </div>
         <div style={{ fontSize: 14, opacity: 0.6 }}>
           1 mois gratuit • Aucune carte bancaire requise • Paiement MTN & Moov Money
@@ -499,7 +502,7 @@ function SlidesBanner() {
     {
       icon: '🏥',
       titre: 'CliniPlus',
-      sousTitre: "Gestion clinique intelligente pour l'Afrique de l'Ouest",
+      sousTitre: "Gestion clinique intelligente pour l\'Afrique de l\'Ouest",
       couleur: '#00c896',
       bg: 'linear-gradient(135deg, #00c896 0%, #0ea5e9 100%)',
     },
@@ -2177,7 +2180,21 @@ function EquipePage({ session, clinique }) {
       <div className="card">
         <div className="card-header">
           <span className="card-title">👨‍⚕️ Équipe ({equipe.length})</span>
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Ajouter membre</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {clinique.type === 'cabinet' && equipe.length >= 3 && (
+              <span style={{ fontSize: 12, color: 'var(--danger)', background: 'rgba(239,68,68,0.1)', padding: '4px 10px', borderRadius: 6 }}>
+                ⚠️ Limite 3 utilisateurs (Cabinet)
+              </span>
+            )}
+            {clinique.type === 'clinique' && equipe.length >= 8 && (
+              <span style={{ fontSize: 12, color: 'var(--accent3)', background: 'rgba(245,158,11,0.1)', padding: '4px 10px', borderRadius: 6 }}>
+                ⚠️ Limite 8 utilisateurs (Clinique)
+              </span>
+            )}
+            <button className="btn btn-primary"
+              disabled={(clinique.type === 'cabinet' && equipe.length >= 3) || (clinique.type === 'clinique' && equipe.length >= 8)}
+              onClick={() => setShowModal(true)}>+ Ajouter membre</button>
+          </div>
         </div>
         {loading ? <div className="loading"><Spinner dark /> Chargement...</div>
           : equipe.length === 0 ? <div className="empty"><div className="empty-icon">👨‍⚕️</div><p>Aucun membre</p></div>
@@ -2217,6 +2234,7 @@ function EquipePage({ session, clinique }) {
             <div className="form-group"><label className="form-label">Rôle *</label>
               <select className="form-select" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
                 <option value="medecin">Médecin</option>
+                <option value="gynecologue">Gynécologue</option>
                 <option value="infirmier">Infirmier(e)</option>
                 <option value="secretaire">Secrétaire</option>
                 <option value="pharmacien">Pharmacien</option>
@@ -2591,7 +2609,7 @@ function AnalysesPage({ session, clinique, profil }) {
           </div>
           <div className="form-group">
             <label className="form-label">Résultat</label>
-            <textarea className="form-textarea" placeholder="Saisir le résultat de l'analyse..." value={editAnalyse.resultat || ''} onChange={e => setEditAnalyse(a => ({ ...a, resultat: e.target.value }))} style={{ minHeight: 100 }} />
+            <textarea className="form-textarea" placeholder="Saisir le résultat de l\'analyse..." value={editAnalyse.resultat || ''} onChange={e => setEditAnalyse(a => ({ ...a, resultat: e.target.value }))} style={{ minHeight: 100 }} />
           </div>
           <div className="form-row">
             <div className="form-group">
@@ -3374,7 +3392,7 @@ function RHPage({ session, clinique }) {
                   </select>
                 </div>
               </div>
-              <div className="form-group"><label className="form-label">Date d'embauche</label><input className="form-input" type="date" value={form.date_embauche || ''} onChange={e => setForm(f => ({ ...f, date_embauche: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Date d\'embauche</label><input className="form-input" type="date" value={form.date_embauche || ''} onChange={e => setForm(f => ({ ...f, date_embauche: e.target.value }))} /></div>
             </>
           )}
           {modalType === 'conge' && (
@@ -3517,6 +3535,392 @@ function JournalPage({ session, clinique }) {
     </div>
   );
 }
+
+// ========== MODULE MATERNITE ==========
+function MaternitePage({ session, clinique, profil }) {
+  const [onglet, setOnglet] = useState('grossesses');
+  const [grossesses, setGrossesses] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const tk = session?.access_token;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [g, p] = await Promise.all([
+      dbAPI.get('maternite_grossesses', `clinique_id=eq.${clinique.id}&order=created_at.desc`, tk),
+      dbAPI.get('patients', `clinique_id=eq.${clinique.id}&sexe=eq.F&order=nom.asc`, tk),
+    ]);
+    if (Array.isArray(g)) setGrossesses(g);
+    if (Array.isArray(p)) setPatients(p);
+    setLoading(false);
+  }, [clinique.id, tk]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const getPatient = (id) => patients.find(p => p.id === id);
+
+  const semainesGrossesse = (dateDebut) => {
+    if (!dateDebut) return '—';
+    const diff = new Date() - new Date(dateDebut);
+    const semaines = Math.floor(diff / (7 * 86400000));
+    return `${semaines} SA`;
+  };
+
+  const joursTerme = (dateTerm) => {
+    if (!dateTerm) return null;
+    const diff = new Date(dateTerm) - new Date();
+    return Math.ceil(diff / 86400000);
+  };
+
+  const openModal = (type, data = {}) => {
+    setModalType(type);
+    setForm(data);
+    setShowModal(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      if (modalType === 'grossesse') {
+        await dbAPI.post('maternite_grossesses', {
+          ...form,
+          clinique_id: clinique.id,
+          nombre_grossesses_anterieures: parseInt(form.nombre_grossesses_anterieures) || 0,
+          nombre_accouchements_anterieurs: parseInt(form.nombre_accouchements_anterieurs) || 0,
+        }, tk);
+        await logAction(clinique.id, profil, 'Nouvelle grossesse enregistrée', 'maternite',
+          `Patient: ${getPatient(form.patient_id)?.nom || ''}`, tk);
+      } else if (modalType === 'consultation_prenatale') {
+        await dbAPI.post('maternite_consultations', {
+          ...form,
+          clinique_id: clinique.id,
+          grossesse_id: selected?.id,
+          semaine_amenorrhee: parseInt(form.semaine_amenorrhee) || null,
+          poids_mere: parseFloat(form.poids_mere) || null,
+          hauteur_uterine: parseFloat(form.hauteur_uterine) || null,
+          bcf: parseInt(form.bcf) || null,
+          oedemes: form.oedemes === 'true',
+        }, tk);
+        await logAction(clinique.id, profil, 'Consultation prénatale', 'maternite',
+          `SA: ${form.semaine_amenorrhee}`, tk);
+      } else if (modalType === 'accouchement') {
+        const accRes = await dbAPI.post('maternite_accouchements', {
+          ...form,
+          clinique_id: clinique.id,
+          grossesse_id: selected?.id,
+          patient_id: selected?.patient_id,
+          semaines_grossesse: parseInt(form.semaines_grossesse) || null,
+          duree_travail_heures: parseFloat(form.duree_travail_heures) || null,
+        }, tk);
+        const acc = Array.isArray(accRes) ? accRes[0] : accRes;
+        if (acc?.id && form.poids_naissance) {
+          await dbAPI.post('maternite_nouveau_nes', {
+            clinique_id: clinique.id,
+            accouchement_id: acc.id,
+            prenom: form.prenom_bebe,
+            sexe: form.sexe_bebe,
+            poids_naissance: parseFloat(form.poids_naissance) || null,
+            taille_naissance: parseFloat(form.taille_naissance) || null,
+            perimetre_cranien: parseFloat(form.perimetre_cranien) || null,
+            score_apgar_1min: parseInt(form.score_apgar_1min) || null,
+            score_apgar_5min: parseInt(form.score_apgar_5min) || null,
+            statut_vital: form.statut_vital || 'vivant',
+          }, tk);
+        }
+        // Marquer grossesse comme terminée
+        await dbAPI.patch('maternite_grossesses', `id=eq.${selected?.id}`, { statut: 'termine' }, tk);
+        await logAction(clinique.id, profil, 'Accouchement enregistré', 'maternite',
+          `Type: ${form.type_accouchement}`, tk);
+      } else if (modalType === 'postnatal') {
+        await dbAPI.post('maternite_postnatal', {
+          ...form,
+          clinique_id: clinique.id,
+          accouchement_id: selected?.id,
+          poids: parseFloat(form.poids) || null,
+          temperature: parseFloat(form.temperature) || null,
+          allaitement: form.allaitement === 'true',
+        }, tk);
+        await logAction(clinique.id, profil, 'Visite post-natale', 'maternite',
+          `Type: ${form.type_suivi}`, tk);
+      }
+      await load();
+      setShowModal(false);
+      setForm({});
+    } catch (e) { console.error(e); }
+    setSaving(false);
+  };
+
+  // Stats
+  const enCours = grossesses.filter(g => g.statut === 'en_cours').length;
+  const termines = grossesses.filter(g => g.statut === 'termine').length;
+  const procheTerme = grossesses.filter(g => {
+    const j = joursTerme(g.date_terme_prevue);
+    return j !== null && j >= 0 && j <= 30;
+  }).length;
+
+  return (
+    <div className="fade-in">
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 20 }}>
+        <div className="stat-card green"><div className="stat-icon">🤰</div><div className="stat-value">{enCours}</div><div className="stat-label">Grossesses en cours</div></div>
+        <div className="stat-card orange"><div className="stat-icon">⏰</div><div className="stat-value">{procheTerme}</div><div className="stat-label">Proche du terme</div></div>
+        <div className="stat-card blue"><div className="stat-icon">👶</div><div className="stat-value">{termines}</div><div className="stat-label">Accouchements</div></div>
+        <div className="stat-card purple"><div className="stat-icon">👩‍⚕️</div><div className="stat-value">{grossesses.length}</div><div className="stat-label">Total suivis</div></div>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs-bar">
+        <button className={`tab-btn ${onglet === 'grossesses' ? 'active' : ''}`} onClick={() => setOnglet('grossesses')}>🤰 Grossesses</button>
+        <button className={`tab-btn ${onglet === 'accouchements' ? 'active' : ''}`} onClick={() => setOnglet('accouchements')}>👶 Accouchements</button>
+      </div>
+
+      {/* Liste grossesses */}
+      {onglet === 'grossesses' && (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">🤰 Suivi des grossesses</span>
+            <button className="btn btn-primary" onClick={() => openModal('grossesse', { statut: 'en_cours' })}>+ Nouvelle grossesse</button>
+          </div>
+          {loading ? <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>
+            : grossesses.length === 0 ? <div className="empty"><div className="empty-icon">🤰</div><p>Aucune grossesse enregistrée</p></div>
+              : <table className="table">
+                <thead><tr><th>Patiente</th><th>Début grossesse</th><th>Terme prévu</th><th>Avancement</th><th>Statut</th><th>Actions</th></tr></thead>
+                <tbody>{grossesses.map(g => {
+                  const p = getPatient(g.patient_id);
+                  const jours = joursTerme(g.date_terme_prevue);
+                  const urgent = jours !== null && jours >= 0 && jours <= 14;
+                  return (
+                    <tr key={g.id}>
+                      <td><strong>{p?.nom} {p?.prenom}</strong></td>
+                      <td style={{ fontSize: 12 }}>{fmtDate(g.date_debut_grossesse)}</td>
+                      <td style={{ fontSize: 12 }}>
+                        {fmtDate(g.date_terme_prevue)}
+                        {jours !== null && g.statut === 'en_cours' && (
+                          <div style={{ fontSize: 11, color: urgent ? 'var(--danger)' : 'var(--accent3)', fontWeight: 600 }}>
+                            {jours > 0 ? `Dans ${jours} jours` : jours === 0 ? '🚨 Aujourd\'hui !' : 'Dépassé'}
+                          </div>
+                        )}
+                      </td>
+                      <td>{semainesGrossesse(g.date_debut_grossesse)}</td>
+                      <td>
+                        <span className="badge" style={{
+                          background: g.statut === 'en_cours' ? 'rgba(0,200,150,0.1)' : 'rgba(14,165,233,0.1)',
+                          color: g.statut === 'en_cours' ? 'var(--accent)' : 'var(--accent2)'
+                        }}>{g.statut === 'en_cours' ? '🤰 En cours' : '✅ Terminé'}</span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button className="btn btn-info btn-sm" onClick={() => { setSelected(g); openModal('consultation_prenatale', {}); }}>📋 CPN</button>
+                          {g.statut === 'en_cours' && (
+                            <button className="btn btn-primary btn-sm" onClick={() => { setSelected(g); openModal('accouchement', { type_accouchement: 'normal', statut_vital: 'vivant' }); }}>👶 Accoucher</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+          }
+        </div>
+      )}
+
+      {/* Accouchements */}
+      {onglet === 'accouchements' && (
+        <AccouchementsSection clinique={clinique} session={session} profil={profil} patients={patients} onPostnatal={(acc) => { setSelected(acc); openModal('postnatal', { type_suivi: 'mere' }); }} />
+      )}
+
+      {/* Modals */}
+      {showModal && (
+        <Modal
+          title={
+            modalType === 'grossesse' ? '🤰 Nouvelle grossesse' :
+            modalType === 'consultation_prenatale' ? '📋 Consultation prénatale' :
+            modalType === 'accouchement' ? '👶 Enregistrer un accouchement' :
+            '🏥 Suivi post-natal'
+          }
+          onClose={() => { setShowModal(false); setForm({}); }}
+          large
+          footer={
+            <><button className="btn btn-secondary" onClick={() => { setShowModal(false); setForm({}); }}>Annuler</button>
+              <button className="btn btn-primary" onClick={save} disabled={saving}>{saving && <span className="spinner" />} Enregistrer</button></>
+          }
+        >
+          {modalType === 'grossesse' && (
+            <>
+              <div className="form-group"><label className="form-label">Patiente *</label>
+                <select className="form-select" value={form.patient_id || ''} onChange={e => setForm(f => ({ ...f, patient_id: e.target.value }))}>
+                  <option value="">— Sélectionner —</option>
+                  {patients.map(p => <option key={p.id} value={p.id}>{p.nom} {p.prenom} ({ageAns(p.date_naissance)})</option>)}
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Date début grossesse</label><input className="form-input" type="date" value={form.date_debut_grossesse || ''} onChange={e => setForm(f => ({ ...f, date_debut_grossesse: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Date terme prévue</label><input className="form-input" type="date" value={form.date_terme_prevue || ''} onChange={e => setForm(f => ({ ...f, date_terme_prevue: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Nb grossesses antérieures</label><input className="form-input" type="number" min="0" value={form.nombre_grossesses_anterieures || 0} onChange={e => setForm(f => ({ ...f, nombre_grossesses_anterieures: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Nb accouchements antérieurs</label><input className="form-input" type="number" min="0" value={form.nombre_accouchements_anterieurs || 0} onChange={e => setForm(f => ({ ...f, nombre_accouchements_anterieurs: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Groupe sanguin père</label><select className="form-select" value={form.groupe_sanguin_pere || ''} onChange={e => setForm(f => ({ ...f, groupe_sanguin_pere: e.target.value }))}><option value="">—</option>{['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(g => <option key={g}>{g}</option>)}</select></div>
+                <div className="form-group"><label className="form-label">Facteur Rh</label><select className="form-select" value={form.facteur_rh || ''} onChange={e => setForm(f => ({ ...f, facteur_rh: e.target.value }))}><option value="">—</option><option value="positif">Positif (+)</option><option value="negatif">Négatif (-)</option></select></div>
+              </div>
+              <div className="form-group"><label className="form-label">Notes / Antécédents obstétricaux</label><textarea className="form-textarea" value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} /></div>
+            </>
+          )}
+
+          {modalType === 'consultation_prenatale' && (
+            <>
+              <div className="alert alert-info">📋 Consultation prénatale pour la grossesse sélectionnée</div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Semaines d\'aménorrhée (SA)</label><input className="form-input" type="number" placeholder="Ex: 28" value={form.semaine_amenorrhee || ''} onChange={e => setForm(f => ({ ...f, semaine_amenorrhee: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Poids mère (kg)</label><input className="form-input" type="number" step="0.1" value={form.poids_mere || ''} onChange={e => setForm(f => ({ ...f, poids_mere: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Tension artérielle</label><input className="form-input" placeholder="Ex: 120/80" value={form.tension_arterielle || ''} onChange={e => setForm(f => ({ ...f, tension_arterielle: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Hauteur utérine (cm)</label><input className="form-input" type="number" step="0.5" value={form.hauteur_uterine || ''} onChange={e => setForm(f => ({ ...f, hauteur_uterine: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">BCF (bpm)</label><input className="form-input" type="number" placeholder="Ex: 140" value={form.bcf || ''} onChange={e => setForm(f => ({ ...f, bcf: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Présentation fœtale</label><select className="form-select" value={form.presentation_foetale || ''} onChange={e => setForm(f => ({ ...f, presentation_foetale: e.target.value }))}><option value="">—</option><option value="cephalique">Céphalique</option><option value="siege">Siège</option><option value="transverse">Transverse</option></select></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Œdèmes</label><select className="form-select" value={form.oedemes || 'false'} onChange={e => setForm(f => ({ ...f, oedemes: e.target.value }))}><option value="false">Non</option><option value="true">Oui</option></select></div>
+                <div className="form-group"><label className="form-label">Prochain RDV</label><input className="form-input" type="date" value={form.prochain_rdv || ''} onChange={e => setForm(f => ({ ...f, prochain_rdv: e.target.value }))} /></div>
+              </div>
+              <div className="form-group"><label className="form-label">Résultat échographie</label><textarea className="form-textarea" value={form.resultat_echographie || ''} onChange={e => setForm(f => ({ ...f, resultat_echographie: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Examens biologiques</label><textarea className="form-textarea" placeholder="NFS, glycémie, ECBU..." value={form.examens_biologiques || ''} onChange={e => setForm(f => ({ ...f, examens_biologiques: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Observations</label><textarea className="form-textarea" value={form.observations || ''} onChange={e => setForm(f => ({ ...f, observations: e.target.value }))} /></div>
+            </>
+          )}
+
+          {modalType === 'accouchement' && (
+            <>
+              <div className="form-section-title">🏥 Informations accouchement</div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Type d\'accouchement</label>
+                  <select className="form-select" value={form.type_accouchement || 'normal'} onChange={e => setForm(f => ({ ...f, type_accouchement: e.target.value }))}>
+                    <option value="normal">Voie basse normale</option>
+                    <option value="cesarienne">Césarienne</option>
+                    <option value="forceps">Forceps</option>
+                    <option value="ventouse">Ventouse</option>
+                  </select>
+                </div>
+                <div className="form-group"><label className="form-label">Semaines de grossesse</label><input className="form-input" type="number" value={form.semaines_grossesse || ''} onChange={e => setForm(f => ({ ...f, semaines_grossesse: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Durée du travail (heures)</label><input className="form-input" type="number" step="0.5" value={form.duree_travail_heures || ''} onChange={e => setForm(f => ({ ...f, duree_travail_heures: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Médecin accoucheur</label><input className="form-input" value={form.medecin_accoucheur || ''} onChange={e => setForm(f => ({ ...f, medecin_accoucheur: e.target.value }))} /></div>
+              </div>
+              <div className="form-group"><label className="form-label">Sage-femme</label><input className="form-input" value={form.sage_femme || ''} onChange={e => setForm(f => ({ ...f, sage_femme: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Complications</label><textarea className="form-textarea" placeholder="Aucune complication si vide" value={form.complications || ''} onChange={e => setForm(f => ({ ...f, complications: e.target.value }))} /></div>
+
+              <div className="form-section" style={{ marginTop: 16 }}>
+                <div className="form-section-title">👶 Nouveau-né</div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Prénom bébé</label><input className="form-input" value={form.prenom_bebe || ''} onChange={e => setForm(f => ({ ...f, prenom_bebe: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Sexe</label><select className="form-select" value={form.sexe_bebe || ''} onChange={e => setForm(f => ({ ...f, sexe_bebe: e.target.value }))}><option value="">—</option><option value="M">Masculin</option><option value="F">Féminin</option></select></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Poids naissance (kg)</label><input className="form-input" type="number" step="0.01" placeholder="Ex: 3.2" value={form.poids_naissance || ''} onChange={e => setForm(f => ({ ...f, poids_naissance: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Taille (cm)</label><input className="form-input" type="number" step="0.5" value={form.taille_naissance || ''} onChange={e => setForm(f => ({ ...f, taille_naissance: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Périmètre crânien (cm)</label><input className="form-input" type="number" step="0.5" value={form.perimetre_cranien || ''} onChange={e => setForm(f => ({ ...f, perimetre_cranien: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Score Apgar 1min</label><input className="form-input" type="number" min="0" max="10" value={form.score_apgar_1min || ''} onChange={e => setForm(f => ({ ...f, score_apgar_1min: e.target.value }))} /></div>
+                </div>
+                <div className="form-row">
+                  <div className="form-group"><label className="form-label">Score Apgar 5min</label><input className="form-input" type="number" min="0" max="10" value={form.score_apgar_5min || ''} onChange={e => setForm(f => ({ ...f, score_apgar_5min: e.target.value }))} /></div>
+                  <div className="form-group"><label className="form-label">Statut vital</label><select className="form-select" value={form.statut_vital || 'vivant'} onChange={e => setForm(f => ({ ...f, statut_vital: e.target.value }))}><option value="vivant">Vivant</option><option value="mort_ne">Mort-né</option></select></div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {modalType === 'postnatal' && (
+            <>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Type de suivi</label>
+                  <select className="form-select" value={form.type_suivi || 'mere'} onChange={e => setForm(f => ({ ...f, type_suivi: e.target.value }))}>
+                    <option value="mere">Mère</option>
+                    <option value="nouveau_ne">Nouveau-né</option>
+                    <option value="les_deux">Mère + Nouveau-né</option>
+                  </select>
+                </div>
+                <div className="form-group"><label className="form-label">Date de visite</label><input className="form-input" type="datetime-local" value={form.date_visite || ''} onChange={e => setForm(f => ({ ...f, date_visite: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Poids (kg)</label><input className="form-input" type="number" step="0.1" value={form.poids || ''} onChange={e => setForm(f => ({ ...f, poids: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Tension artérielle</label><input className="form-input" placeholder="Ex: 120/80" value={form.tension_arterielle || ''} onChange={e => setForm(f => ({ ...f, tension_arterielle: e.target.value }))} /></div>
+              </div>
+              <div className="form-row">
+                <div className="form-group"><label className="form-label">Température (°C)</label><input className="form-input" type="number" step="0.1" value={form.temperature || ''} onChange={e => setForm(f => ({ ...f, temperature: e.target.value }))} /></div>
+                <div className="form-group"><label className="form-label">Allaitement</label><select className="form-select" value={form.allaitement || 'true'} onChange={e => setForm(f => ({ ...f, allaitement: e.target.value }))}><option value="true">Oui</option><option value="false">Non</option></select></div>
+              </div>
+              <div className="form-group"><label className="form-label">Involution utérine</label><input className="form-input" value={form.involution_uterine || ''} onChange={e => setForm(f => ({ ...f, involution_uterine: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">État cicatrice</label><input className="form-input" placeholder="Si césarienne" value={form.etat_cicatrice || ''} onChange={e => setForm(f => ({ ...f, etat_cicatrice: e.target.value }))} /></div>
+              <div className="form-group"><label className="form-label">Observations</label><textarea className="form-textarea" value={form.observations || ''} onChange={e => setForm(f => ({ ...f, observations: e.target.value }))} /></div>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Sous-composant accouchements
+function AccouchementsSection({ clinique, session, patients, onPostnatal }) {
+  const [accouchements, setAccouchements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const tk = session?.access_token;
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      const a = await dbAPI.get('maternite_accouchements', `clinique_id=eq.${clinique.id}&order=created_at.desc`, tk);
+      if (Array.isArray(a)) setAccouchements(a);
+      setLoading(false);
+    };
+    load();
+  }, [clinique.id, tk]);
+
+  const getPatient = (id) => patients.find(p => p.id === id);
+
+  return (
+    <div className="card">
+      <div className="card-header"><span className="card-title">👶 Accouchements & Post-natal</span></div>
+      {loading ? <div className="loading"><span className="spinner spinner-dark" /> Chargement...</div>
+        : accouchements.length === 0 ? <div className="empty"><div className="empty-icon">👶</div><p>Aucun accouchement enregistré</p></div>
+          : <table className="table">
+            <thead><tr><th>Date</th><th>Mère</th><th>Type</th><th>Semaines</th><th>Durée travail</th><th>Complications</th><th>Actions</th></tr></thead>
+            <tbody>{accouchements.map(a => {
+              const p = getPatient(a.patient_id);
+              return (
+                <tr key={a.id}>
+                  <td style={{ fontSize: 12 }}>{fmtDate(a.date_accouchement)}</td>
+                  <td><strong>{p?.nom} {p?.prenom}</strong></td>
+                  <td><span className="badge" style={{ background: a.type_accouchement === 'normal' ? 'rgba(0,200,150,0.1)' : 'rgba(239,68,68,0.1)', color: a.type_accouchement === 'normal' ? 'var(--accent)' : 'var(--danger)' }}>
+                    {a.type_accouchement === 'normal' ? '🟢 Voie basse' : a.type_accouchement === 'cesarienne' ? '🔴 Césarienne' : a.type_accouchement}
+                  </span></td>
+                  <td>{a.semaines_grossesse ? `${a.semaines_grossesse} SA` : '—'}</td>
+                  <td>{a.duree_travail_heures ? `${a.duree_travail_heures}h` : '—'}</td>
+                  <td style={{ fontSize: 12, color: a.complications ? 'var(--danger)' : 'var(--text3)' }}>{a.complications || 'Aucune'}</td>
+                  <td><button className="btn btn-info btn-sm" onClick={() => onPostnatal(a)}>🏥 Post-natal</button></td>
+                </tr>
+              );
+            })}</tbody>
+          </table>
+      }
+    </div>
+  );
+}
+
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -3694,6 +4098,7 @@ export default function App() {
             {page === 'rdv'          && <RendezVousPage session={session} clinique={clinique} profil={profil} />}
             {page === 'pharmacie'    && <PharmaciePage session={session} clinique={clinique} profil={profil} />}
             {page === 'facturation'  && <FacturationPage session={session} clinique={clinique} />}
+            {page === 'maternite'   && <MaternitePage session={session} clinique={clinique} profil={profil} />}
             {page === 'rh'           && <RHPage session={session} clinique={clinique} />}
             {page === 'journal'      && <JournalPage session={session} clinique={clinique} />}
             {page === 'equipe'       && <EquipePage session={session} clinique={clinique} />}
