@@ -46,7 +46,7 @@ const logAction = async (cliniqueId, profil, action, module, details, token) => 
   } catch(e) {}
 };
 
-const sbFetch = async (path, options = {}, token = SUPABASE_ANON_KEY) => {
+const sbFetch = async (path, options = {}, token = SUPABASE_ANON_KEY, _retry = true) => {
   const r = await fetch(`${SUPABASE_URL}${path}`, {
     ...options,
     headers: {
@@ -58,13 +58,37 @@ const sbFetch = async (path, options = {}, token = SUPABASE_ANON_KEY) => {
     }
   });
   if (r.status === 204) return true;
-  try { return await r.json(); } catch { return null; }
+  let data = null;
+  try { data = await r.json(); } catch { data = null; }
+  if (!r.ok) {
+    // Token expiré (401) : tenter un rafraîchissement automatique puis rejouer la requête une seule fois
+    if (r.status === 401 && _retry && token !== SUPABASE_ANON_KEY) {
+      const saved = loadSession();
+      if (saved?.refresh_token) {
+        try {
+          const refreshed = await sbFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: JSON.stringify({ refresh_token: saved.refresh_token }) }, SUPABASE_ANON_KEY, false);
+          if (refreshed?.access_token) {
+            const merged = { ...saved, ...refreshed };
+            saveSession(merged);
+            return sbFetch(path, options, refreshed.access_token, false);
+          }
+        } catch (e2) { /* rafraîchissement impossible, on retombe sur l'erreur d'origine */ }
+      }
+    }
+    console.error('Supabase error', r.status, path, data);
+    const err = new Error((data && (data.message || data.error_description || data.hint)) || `Erreur ${r.status}`);
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
 };
 
 const authAPI = {
   signUp: (email, password, data) => sbFetch('/auth/v1/signup', { method: 'POST', body: JSON.stringify({ email, password, data }) }),
   signIn: (email, password) => sbFetch('/auth/v1/token?grant_type=password', { method: 'POST', body: JSON.stringify({ email, password }) }),
   resetPassword: (email) => sbFetch('/auth/v1/recover', { method: 'POST', body: JSON.stringify({ email }) }),
+  refresh: (refresh_token) => sbFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: JSON.stringify({ refresh_token }) }),
 };
 
 const dbAPI = {
@@ -875,10 +899,14 @@ function PatientsPage({ session, clinique, onConsult }) {
   const save = async () => {
     if (!form.nom) return;
     setSaving(true);
-    await dbAPI.post('patients', { ...form, clinique_id: clinique.id, numero_dossier: '' }, token);
-    await load();
-    setShowModal(false);
-    setForm({ nom: '', prenom: '', date_naissance: '', sexe: 'M', telephone: '', adresse: '', profession: '', groupe_sanguin: '', allergies: '', antecedents: '' });
+    try {
+      await dbAPI.post('patients', { ...form, clinique_id: clinique.id, numero_dossier: '' }, token);
+      await load();
+      setShowModal(false);
+      setForm({ nom: '', prenom: '', date_naissance: '', sexe: 'M', telephone: '', adresse: '', profession: '', groupe_sanguin: '', allergies: '', antecedents: '' });
+    } catch (e) {
+      alert("Échec de l'enregistrement du patient : " + e.message);
+    }
     setSaving(false);
   };
 
