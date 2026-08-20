@@ -4043,6 +4043,7 @@ export default function App() {
   const pageInfo = NAV_ITEMS.find(n => n.id === page);
   const joursAbonnement = clinique ? joursRestants(clinique.date_expiration_abonnement) : null;
   const abonnementExpire = joursAbonnement !== null && joursAbonnement <= 0;
+  useEffect(() => { setLectureSeule(abonnementExpire); }, [abonnementExpire]);
 
   // Écran de chargement pendant la restauration de session
   if (loadingSession) {
@@ -4096,9 +4097,6 @@ export default function App() {
       </>
     );
   }
-
-  // Active/désactive le verrou d'écriture global selon l'état de l'abonnement
-  useEffect(() => { setLectureSeule(abonnementExpire); }, [abonnementExpire]);
 
   return (
     <>
