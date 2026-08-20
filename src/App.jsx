@@ -91,11 +91,39 @@ const authAPI = {
   refresh: (refresh_token) => sbFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: JSON.stringify({ refresh_token }) }),
 };
 
+// Verrou lecture-seule global (activé quand l'abonnement de la clinique est expiré).
+// Les écritures sur la table "cliniques" restent autorisées : la clinique doit pouvoir
+// mettre à jour ses infos et payer le renouvellement même en mode bloqué.
+let LECTURE_SEULE = false;
+const setLectureSeule = (v) => { LECTURE_SEULE = v; };
+class AbonnementExpireError extends Error {}
+
 const dbAPI = {
   get: (table, filter, token) => sbFetch(`/rest/v1/${table}?${filter}&select=*`, {}, token),
-  post: (table, body, token) => sbFetch(`/rest/v1/${table}`, { method: 'POST', body: JSON.stringify(body) }, token),
-  patch: (table, filter, body, token) => sbFetch(`/rest/v1/${table}?${filter}`, { method: 'PATCH', body: JSON.stringify(body) }, token),
-  del: (table, filter, token) => sbFetch(`/rest/v1/${table}?${filter}`, { method: 'DELETE' }, token),
+  post: (table, body, token) => {
+    if (LECTURE_SEULE && table !== 'cliniques') {
+      const msg = "Abonnement expiré : renouvelez-le pour pouvoir enregistrer de nouvelles données.";
+      alert(msg);
+      return Promise.reject(new AbonnementExpireError(msg));
+    }
+    return sbFetch(`/rest/v1/${table}`, { method: 'POST', body: JSON.stringify(body) }, token);
+  },
+  patch: (table, filter, body, token) => {
+    if (LECTURE_SEULE && table !== 'cliniques') {
+      const msg = "Abonnement expiré : renouvelez-le pour pouvoir modifier des données.";
+      alert(msg);
+      return Promise.reject(new AbonnementExpireError(msg));
+    }
+    return sbFetch(`/rest/v1/${table}?${filter}`, { method: 'PATCH', body: JSON.stringify(body) }, token);
+  },
+  del: (table, filter, token) => {
+    if (LECTURE_SEULE && table !== 'cliniques') {
+      const msg = "Abonnement expiré : renouvelez-le pour pouvoir supprimer des données.";
+      alert(msg);
+      return Promise.reject(new AbonnementExpireError(msg));
+    }
+    return sbFetch(`/rest/v1/${table}?${filter}`, { method: 'DELETE' }, token);
+  },
 };
 
 
@@ -2777,7 +2805,7 @@ function ModalPaiement({ clinique, session, onClose, onSuccess }) {
 }
 
 // ========== BANNIÈRE ABONNEMENT ==========
-function BanniereAbonnement({ clinique, session, onRenew }) {
+function BanniereAbonnement({ clinique, profil, onRenew }) {
   if (!clinique.date_expiration_abonnement) return null;
 
   const expiration = new Date(clinique.date_expiration_abonnement);
@@ -2788,6 +2816,7 @@ function BanniereAbonnement({ clinique, session, onRenew }) {
   if (joursRestants > 7) return null; // Pas d'alerte si plus de 7 jours
 
   const expire = joursRestants <= 0;
+  const estAdmin = profil?.role === 'admin';
 
   return (
     <div style={{
@@ -2800,23 +2829,28 @@ function BanniereAbonnement({ clinique, session, onRenew }) {
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 16,
+      flexWrap: 'wrap',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 20 }}>{expire ? '🚨' : '⚠️'}</span>
         <div>
           <div style={{ fontWeight: 600, fontSize: 13, color: expire ? 'var(--danger)' : 'var(--accent3)' }}>
-            {expire ? 'Abonnement expiré !' : `Abonnement expire dans ${joursRestants} jour(s)`}
+            {expire ? 'Abonnement expiré — mode lecture seule' : `Abonnement expire dans ${joursRestants} jour(s)`}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text2)' }}>
             {expire
-              ? 'Renouvelez votre abonnement pour continuer à utiliser CliniPlus.'
+              ? (estAdmin
+                  ? 'Vous pouvez consulter les données, mais plus en ajouter, modifier ou supprimer tant que l\'abonnement n\'est pas renouvelé.'
+                  : 'Consultation possible, mais plus d\'ajout/modification/suppression. Contactez l\'administrateur de la clinique pour renouveler.')
               : `Renouvelez avant le ${expiration.toLocaleDateString('fr-FR')} — ${tarif.montant.toLocaleString('fr-FR')} FCFA/mois`}
           </div>
         </div>
       </div>
-      <button className="btn btn-primary btn-sm" onClick={onRenew} style={{ flexShrink: 0 }}>
-        💳 Renouveler maintenant
-      </button>
+      {estAdmin && (
+        <button className="btn btn-primary btn-sm" onClick={onRenew} style={{ flexShrink: 0 }}>
+          💳 Renouveler maintenant
+        </button>
+      )}
     </div>
   );
 }
@@ -4007,6 +4041,8 @@ export default function App() {
   const roleInfo = profil ? (ROLES[profil.role] || { label: profil.role, color: '#6b7280' }) : null;
   const navItems = NAV_ITEMS.filter(item => !profil || item.roles.includes(profil.role));
   const pageInfo = NAV_ITEMS.find(n => n.id === page);
+  const joursAbonnement = clinique ? joursRestants(clinique.date_expiration_abonnement) : null;
+  const abonnementExpire = joursAbonnement !== null && joursAbonnement <= 0;
 
   // Écran de chargement pendant la restauration de session
   if (loadingSession) {
@@ -4061,6 +4097,9 @@ export default function App() {
     );
   }
 
+  // Active/désactive le verrou d'écriture global selon l'état de l'abonnement
+  useEffect(() => { setLectureSeule(abonnementExpire); }, [abonnementExpire]);
+
   return (
     <>
       <style>{STYLES}</style>
@@ -4108,13 +4147,11 @@ export default function App() {
 <button onClick={handleLogout} style={{background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'var(--danger)',padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:500}}>↪ Déconnexion</button>
 </div>
           <div className="content">
-            {profil.role === 'admin' && (
-              <BanniereAbonnement
-                clinique={clinique}
-                session={session}
-                onRenew={() => setShowPaiement(true)}
-              />
-            )}
+            <BanniereAbonnement
+              clinique={clinique}
+              profil={profil}
+              onRenew={() => setShowPaiement(true)}
+            />
             {page === 'dashboard'    && <DashboardPage session={session} clinique={clinique} profil={profil} />}
             {page === 'rapport'      && <RapportJournalierPage session={session} clinique={clinique} profil={profil} />}
             {page === 'statistiques' && <StatistiquesPage session={session} clinique={clinique} />}
