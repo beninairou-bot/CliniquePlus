@@ -1605,18 +1605,26 @@ function RendezVousPage({ session, clinique, profil }) {
   const save = async () => {
     if (!form.patient_id || !form.date_heure) return;
     setSaving(true);
-    await dbAPI.post('rendez_vous', { ...form, clinique_id: clinique.id }, token);
-    await logAction(clinique.id, profil, 'Rendez-vous créé', 'rdv',
-      `Date: ${form.date_heure} | Motif: ${form.motif || 'N/A'}`, token);
-    await load();
-    setShowModal(false);
-    setForm({ patient_id: '', date_heure: '', motif: '', statut: 'planifie', notes: '' });
+    try {
+      await dbAPI.post('rendez_vous', { ...form, clinique_id: clinique.id }, token);
+      await logAction(clinique.id, profil, 'Rendez-vous créé', 'rdv',
+        `Date: ${form.date_heure} | Motif: ${form.motif || 'N/A'}`, token);
+      await load();
+      setShowModal(false);
+      setForm({ patient_id: '', date_heure: '', motif: '', statut: 'planifie', notes: '' });
+    } catch (e) {
+      alert("Échec de l'enregistrement du rendez-vous : " + e.message);
+    }
     setSaving(false);
   };
 
   const updateStatut = async (id, statut) => {
-    await dbAPI.patch('rendez_vous', `id=eq.${id}`, { statut }, token);
-    await load();
+    try {
+      await dbAPI.patch('rendez_vous', `id=eq.${id}`, { statut }, token);
+      await load();
+    } catch (e) {
+      alert("Échec de la mise à jour du rendez-vous : " + e.message);
+    }
   };
 
   const statutColor = (s) => ({ planifie: '#a0aec0', confirme: 'var(--accent)', en_attente: 'var(--accent3)', annule: 'var(--danger)', termine: 'var(--accent2)' }[s] || '#a0aec0');
@@ -1783,23 +1791,31 @@ function PharmaciePage({ session, clinique, profil }) {
   const save = async () => {
     if (!form.nom) return;
     setSaving(true);
-    await dbAPI.post('medicaments', { ...form, clinique_id: clinique.id, prix_unitaire: parseFloat(form.prix_unitaire) || 0, stock_actuel: parseInt(form.stock_actuel) || 0, stock_minimum: parseInt(form.stock_minimum) || 10 }, token);
-    await load();
-    setShowModal(false);
-    setForm({ nom: '', forme: '', dosage: '', categorie: '', prix_unitaire: '', stock_actuel: '', stock_minimum: 10, date_expiration: '', fournisseur: '' });
+    try {
+      await dbAPI.post('medicaments', { ...form, clinique_id: clinique.id, prix_unitaire: parseFloat(form.prix_unitaire) || 0, stock_actuel: parseInt(form.stock_actuel) || 0, stock_minimum: parseInt(form.stock_minimum) || 10 }, token);
+      await load();
+      setShowModal(false);
+      setForm({ nom: '', forme: '', dosage: '', categorie: '', prix_unitaire: '', stock_actuel: '', stock_minimum: 10, date_expiration: '', fournisseur: '' });
+    } catch (e) {
+      alert("Échec de l'enregistrement du médicament : " + e.message);
+    }
     setSaving(false);
   };
 
   const doReappro = async () => {
     if (!selectedMed || !reapproQty) return;
     setSaving(true);
-    const newStock = selectedMed.stock_actuel + parseInt(reapproQty);
-    await dbAPI.patch('medicaments', `id=eq.${selectedMed.id}`, { stock_actuel: newStock }, token);
-    await load();
-    setShowReappro(false);
-    setSelectedMed(null);
-    setReapproQty('');
-    setReapproNotes('');
+    try {
+      const newStock = selectedMed.stock_actuel + parseInt(reapproQty);
+      await dbAPI.patch('medicaments', `id=eq.${selectedMed.id}`, { stock_actuel: newStock }, token);
+      await load();
+      setShowReappro(false);
+      setSelectedMed(null);
+      setReapproQty('');
+      setReapproNotes('');
+    } catch (e) {
+      alert("Échec du réapprovisionnement : " + e.message);
+    }
     setSaving(false);
   };
 
@@ -1827,42 +1843,49 @@ function PharmaciePage({ session, clinique, profil }) {
     const lines = venteL.filter(l => l.medicament_id && l.quantite > 0);
     if(lines.length === 0) return;
     setSaving(true);
-    const vr = await dbAPI.post('ventes', {
-      clinique_id: clinique.id,
-      patient_id: ventePatient || null,
-      montant_total: totalVente,
-      mode_paiement: venteMode,
-      statut: 'paye'
-    }, token);
-    const v = Array.isArray(vr) ? vr[0] : vr;
-    if(v?.id) {
-      for(const l of lines) {
-        await dbAPI.post('vente_lignes', {
-          vente_id: v.id,
-          medicament_id: l.medicament_id,
-          quantite: parseInt(l.quantite),
-          prix_unitaire: l.prix_unitaire
-        }, token);
-        const med = meds.find(x => x.id === l.medicament_id);
-        if(med) await dbAPI.patch('medicaments', `id=eq.${l.medicament_id}`,
-          {stock_actuel: Math.max(0, med.stock_actuel - parseInt(l.quantite))}, token);
+    try {
+      const vr = await dbAPI.post('ventes', {
+        clinique_id: clinique.id,
+        patient_id: ventePatient || null,
+        montant_total: totalVente,
+        mode_paiement: venteMode,
+        statut: 'paye'
+      }, token);
+      const v = Array.isArray(vr) ? vr[0] : vr;
+      if(v?.id) {
+        for(const l of lines) {
+          await dbAPI.post('vente_lignes', {
+            vente_id: v.id,
+            medicament_id: l.medicament_id,
+            quantite: parseInt(l.quantite),
+            prix_unitaire: l.prix_unitaire
+          }, token);
+          const med = meds.find(x => x.id === l.medicament_id);
+          if(med) await dbAPI.patch('medicaments', `id=eq.${l.medicament_id}`,
+            {stock_actuel: Math.max(0, med.stock_actuel - parseInt(l.quantite))}, token);
+        }
+        await logAction(clinique.id, profil, 'Vente pharmacie', 'pharmacie',
+          `${lines.length} médicament(s) — Total: ${fmtMoney(totalVente)} — Mode: ${venteMode}`, token);
       }
-      await logAction(clinique.id, profil, 'Vente pharmacie', 'pharmacie',
-        `${lines.length} médicament(s) — Total: ${fmtMoney(totalVente)} — Mode: ${venteMode}`, token);
+      await load();
+      setShowVente(false);
+      setVenteL([{medicament_id:'',medicament_nom:'',quantite:1,prix_unitaire:0}]);
+      setVentePatient('');
+      setVenteSaved(true);
+      setTimeout(() => setVenteSaved(false), 4000);
+    } catch (e) {
+      alert("Échec de l'enregistrement de la vente : " + e.message + " — vérifiez le stock avant de réessayer.");
     }
-    await load();
-    setShowVente(false);
-    setVenteL([{medicament_id:'',medicament_nom:'',quantite:1,prix_unitaire:0}]);
-    setVentePatient('');
-    setVenteSaved(true);
-    setTimeout(() => setVenteSaved(false), 4000);
     setSaving(false);
   };
 
   const filtered = meds.filter(m => `${m.nom} ${m.forme || ''} ${m.categorie || ''}`.toLowerCase().includes(search.toLowerCase()));
   const totalValeur = meds.reduce((acc, m) => acc + (m.stock_actuel * m.prix_unitaire), 0);
-  const alertes = meds.filter(m => m.stock_actuel <= m.stock_minimum);
+  const alertesStock = meds.filter(m => m.stock_actuel <= m.stock_minimum);
   const ruptures = meds.filter(m => m.stock_actuel === 0);
+  const joursAvantPeremption = (d) => d ? Math.ceil((new Date(d) - new Date()) / (1000 * 60 * 60 * 24)) : null;
+  const alertesPeremption = meds.filter(m => { const j = joursAvantPeremption(m.date_expiration); return j !== null && j <= 30; });
+  const alertes = [...new Set([...alertesStock, ...alertesPeremption])];
 
   return (
     <div className="fade-in">
@@ -1917,7 +1940,17 @@ function PharmaciePage({ session, clinique, profil }) {
                         <div className="stock-bar"><div className="stock-fill" style={{ width: `${pct}%`, background: rupture ? 'var(--danger)' : alerte ? 'var(--accent3)' : 'var(--accent)' }} /></div>
                       </td>
                       <td><strong>{fmtMoney(valeur)}</strong></td>
-                      <td style={{ fontSize: 12 }}>{m.date_expiration ? fmtDate(m.date_expiration) : '—'}</td>
+                      <td style={{ fontSize: 12 }}>
+                        {m.date_expiration ? (
+                          (() => { const j = joursAvantPeremption(m.date_expiration);
+                            const proche = j !== null && j <= 30;
+                            const depassee = j !== null && j < 0;
+                            return <span style={{ color: depassee ? 'var(--danger)' : proche ? 'var(--accent3)' : 'inherit', fontWeight: proche ? 700 : 400 }}>
+                              {fmtDate(m.date_expiration)}{depassee ? ' — dépassée' : proche ? ` — ${j}j` : ''}
+                            </span>;
+                          })()
+                        ) : '—'}
+                      </td>
                       <td>{rupture ? <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)' }}>Rupture</span>
                         : alerte ? <span className="badge" style={{ background: 'rgba(245,158,11,0.1)', color: 'var(--accent3)' }}>Stock bas</span>
                           : <span className="badge" style={{ background: 'rgba(0,200,150,0.1)', color: 'var(--accent)' }}>OK</span>}
@@ -1937,11 +1970,19 @@ function PharmaciePage({ session, clinique, profil }) {
           {alertes.length === 0 ? <div className="empty"><div className="empty-icon">✅</div><p>Tous les stocks sont OK</p></div>
             : alertes.map(m => {
               const pct = Math.min(100, Math.round((m.stock_actuel / Math.max(1, m.stock_minimum)) * 100));
+              const enAlerteStock = m.stock_actuel <= m.stock_minimum;
+              const j = joursAvantPeremption(m.date_expiration);
+              const enAlertePeremption = j !== null && j <= 30;
+              const critique = m.stock_actuel === 0 || (j !== null && j < 0);
               return (
-                <div key={m.id} style={{ border: `1px solid ${m.stock_actuel === 0 ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`, borderRadius: 8, padding: 14, marginBottom: 10, background: m.stock_actuel === 0 ? 'rgba(239,68,68,0.04)' : 'rgba(245,158,11,0.04)' }}>
+                <div key={m.id} style={{ border: `1px solid ${critique ? 'rgba(239,68,68,0.3)' : 'rgba(245,158,11,0.3)'}`, borderRadius: 8, padding: 14, marginBottom: 10, background: critique ? 'rgba(239,68,68,0.04)' : 'rgba(245,158,11,0.04)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <div><strong>{m.nom} {m.dosage}</strong> <span style={{ fontSize: 12, color: 'var(--text3)' }}>{m.forme}</span></div>
                     <button className="btn btn-primary btn-sm" onClick={() => { setSelectedMed(m); setShowReappro(true); }}>📥 Réapprovisionner</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {enAlerteStock && <span className="badge" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)' }}>{m.stock_actuel === 0 ? 'Rupture de stock' : 'Stock bas'}</span>}
+                    {enAlertePeremption && <span className="badge" style={{ background: 'rgba(245,158,11,0.1)', color: 'var(--accent3)' }}>{j < 0 ? 'Péremption dépassée' : `Expire dans ${j}j`}</span>}
                   </div>
                   <div style={{ display: 'flex', gap: 20, fontSize: 13, marginBottom: 6 }}>
                     <span>Stock actuel : <strong style={{ color: m.stock_actuel === 0 ? 'var(--danger)' : 'var(--accent3)' }}>{m.stock_actuel}</strong></span>
@@ -2091,20 +2132,23 @@ function FacturationPage({ session, clinique }) {
     if (!form.patient_id) return;
     setSaving(true);
     const total = totalFacture();
-    await dbAPI.post('factures', {
-      ...form,
-      clinique_id: clinique.id,
-      montant_consultation: parseFloat(form.montant_consultation) || 0,
-      montant_analyses: parseFloat(form.montant_analyses) || 0,
-      montant_medicaments: parseFloat(form.montant_medicaments) || 0,
-      remise: parseFloat(form.remise) || 0,
-      montant_total: total,
-      montant_paye: form.statut === 'payee' ? total : 0,
-      numero_facture: `FAC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
-    }, token);
-    await load();
-    setShowModal(false);
-    setForm({ patient_id: '', montant_consultation: '', montant_analyses: '', montant_medicaments: '', remise: 0, mode_paiement: 'especes', statut: 'payee' });
+    try {
+      await dbAPI.post('factures', {
+        ...form,
+        clinique_id: clinique.id,
+        montant_consultation: parseFloat(form.montant_consultation) || 0,
+        montant_analyses: parseFloat(form.montant_analyses) || 0,
+        montant_medicaments: parseFloat(form.montant_medicaments) || 0,
+        remise: parseFloat(form.remise) || 0,
+        montant_total: total,
+        montant_paye: form.statut === 'payee' ? total : 0,
+      }, token);
+      await load();
+      setShowModal(false);
+      setForm({ patient_id: '', montant_consultation: '', montant_analyses: '', montant_medicaments: '', remise: 0, mode_paiement: 'especes', statut: 'payee' });
+    } catch (e) {
+      alert("Échec de l'enregistrement de la facture : " + e.message);
+    }
     setSaving(false);
   };
 
@@ -2333,18 +2377,23 @@ function ParametresPage({ session, clinique, profil, onCliniqueUpdate }) {
 
   const save = async () => {
     setSaving(true);
-    let logoUrl = clinique.logo_url;
-    if (logoFile) {
-      setUploadingLogo(true);
-      const url = await uploadLogo(logoFile, clinique.id, token);
-      if (url) logoUrl = url;
-      setUploadingLogo(false);
+    try {
+      let logoUrl = clinique.logo_url;
+      if (logoFile) {
+        setUploadingLogo(true);
+        const url = await uploadLogo(logoFile, clinique.id, token);
+        if (url) logoUrl = url;
+        setUploadingLogo(false);
+      }
+      const updated = { ...form, logo_url: logoUrl };
+      await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, updated, token);
+      if (onCliniqueUpdate) onCliniqueUpdate({ ...clinique, ...updated });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      alert("Échec de l'enregistrement des paramètres : " + e.message);
     }
-    const updated = { ...form, logo_url: logoUrl };
-    await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, updated, token);
-    if (onCliniqueUpdate) onCliniqueUpdate({ ...clinique, ...updated });
-    setSaving(false); setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    setSaving(false);
   };
 
   return (
@@ -2541,19 +2590,23 @@ function AnalysesPage({ session, clinique, profil }) {
 
   const saveAnalyse = async (a) => {
     setSaving(true);
-    if (a.id) {
-      await dbAPI.patch('analyses', `id=eq.${a.id}`, {
-        resultat: a.resultat,
-        valeurs_reference: a.valeurs_reference,
-        interpretation: a.interpretation,
-        statut: a.statut,
-        date_resultat: a.statut === 'resultat_recu' ? new Date().toISOString() : null,
-      }, tk);
-      await logAction(clinique.id, profil, 'Résultat analyse saisi', 'analyses',
-        `Analyse: ${a.nom} | Statut: ${a.statut} | Résultat: ${a.resultat || 'N/A'}`, tk);
+    try {
+      if (a.id) {
+        await dbAPI.patch('analyses', `id=eq.${a.id}`, {
+          resultat: a.resultat,
+          valeurs_reference: a.valeurs_reference,
+          interpretation: a.interpretation,
+          statut: a.statut,
+          date_resultat: a.statut === 'resultat_recu' ? new Date().toISOString() : null,
+        }, tk);
+        await logAction(clinique.id, profil, 'Résultat analyse saisi', 'analyses',
+          `Analyse: ${a.nom} | Statut: ${a.statut} | Résultat: ${a.resultat || 'N/A'}`, tk);
+      }
+      await load();
+      setEditAnalyse(null);
+    } catch (e) {
+      alert("Échec de l'enregistrement de l'analyse : " + e.message);
     }
-    await load();
-    setEditAnalyse(null);
     setSaving(false);
   };
 
@@ -2728,14 +2781,19 @@ function ModalPaiement({ clinique, session, onClose, onSuccess }) {
           }
           if (resp.transaction?.status === 'approved') {
             // Paiement validé — mettre à jour l'abonnement
-            const nouvelleExpiration = new Date();
-            nouvelleExpiration.setMonth(nouvelleExpiration.getMonth() + 1);
-            await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, {
-              abonnement_actif: true,
-              date_expiration_abonnement: nouvelleExpiration.toISOString(),
-            }, tk);
-            setEtape('succes');
-            setTimeout(() => { onSuccess(nouvelleExpiration.toISOString()); }, 2000);
+            try {
+              const nouvelleExpiration = new Date();
+              nouvelleExpiration.setMonth(nouvelleExpiration.getMonth() + 1);
+              await dbAPI.patch('cliniques', `id=eq.${clinique.id}`, {
+                abonnement_actif: true,
+                date_expiration_abonnement: nouvelleExpiration.toISOString(),
+              }, tk);
+              setEtape('succes');
+              setTimeout(() => { onSuccess(nouvelleExpiration.toISOString()); }, 2000);
+            } catch (e) {
+              setLoading(false);
+              setError("Votre paiement a bien été reçu, mais la mise à jour de l'abonnement a échoué (" + e.message + "). Ne repayez pas — contactez le support avec votre référence de transaction pour régulariser.");
+            }
           } else {
             setError('Paiement non confirmé. Veuillez réessayer.');
             setLoading(false);
@@ -3292,24 +3350,33 @@ function RHPage({ session, clinique }) {
 
   const save = async () => {
     setSaving(true);
-    if (modalType === 'employe') {
-      const existing = employes.find(e => e.profil_id === form.profil_id);
-      if (existing) {
-        await dbAPI.patch('rh_employes', `id=eq.${existing.id}`, { salaire_base: parseFloat(form.salaire_base) || 0, date_embauche: form.date_embauche, type_contrat: form.type_contrat }, tk);
-      } else {
-        await dbAPI.post('rh_employes', { clinique_id: clinique.id, profil_id: form.profil_id, salaire_base: parseFloat(form.salaire_base) || 0, date_embauche: form.date_embauche, type_contrat: form.type_contrat || 'cdi' }, tk);
+    try {
+      if (modalType === 'employe') {
+        const existing = employes.find(e => e.profil_id === form.profil_id);
+        if (existing) {
+          await dbAPI.patch('rh_employes', `id=eq.${existing.id}`, { salaire_base: parseFloat(form.salaire_base) || 0, date_embauche: form.date_embauche, type_contrat: form.type_contrat }, tk);
+        } else {
+          await dbAPI.post('rh_employes', { clinique_id: clinique.id, profil_id: form.profil_id, salaire_base: parseFloat(form.salaire_base) || 0, date_embauche: form.date_embauche, type_contrat: form.type_contrat || 'cdi' }, tk);
+        }
+      } else if (modalType === 'conge') {
+        await dbAPI.post('rh_conges', { clinique_id: clinique.id, profil_id: form.profil_id, date_debut: form.date_debut, date_fin: form.date_fin, type: form.type || 'annuel', motif: form.motif, statut: 'en_attente' }, tk);
+      } else if (modalType === 'avance') {
+        await dbAPI.post('rh_avances', { clinique_id: clinique.id, profil_id: form.profil_id, montant: parseFloat(form.montant) || 0, date_avance: form.date_avance || new Date().toISOString().split('T')[0], motif: form.motif, statut: 'accordee' }, tk);
       }
-    } else if (modalType === 'conge') {
-      await dbAPI.post('rh_conges', { clinique_id: clinique.id, profil_id: form.profil_id, date_debut: form.date_debut, date_fin: form.date_fin, type: form.type || 'annuel', motif: form.motif, statut: 'en_attente' }, tk);
-    } else if (modalType === 'avance') {
-      await dbAPI.post('rh_avances', { clinique_id: clinique.id, profil_id: form.profil_id, montant: parseFloat(form.montant) || 0, date_avance: form.date_avance || new Date().toISOString().split('T')[0], motif: form.motif, statut: 'accordee' }, tk);
+      await load(); setShowModal(false);
+    } catch (e) {
+      alert("Échec de l'enregistrement : " + e.message);
     }
-    await load(); setShowModal(false); setSaving(false);
+    setSaving(false);
   };
 
   const validerConge = async (id, statut) => {
-    await dbAPI.patch('rh_conges', `id=eq.${id}`, { statut }, tk);
-    await load();
+    try {
+      await dbAPI.patch('rh_conges', `id=eq.${id}`, { statut }, tk);
+      await load();
+    } catch (e) {
+      alert("Échec de la mise à jour du congé : " + e.message);
+    }
   };
 
   const totalSalaires = employes.reduce((s, e) => s + (e.salaire_base || 0), 0);
