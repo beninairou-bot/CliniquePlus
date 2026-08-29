@@ -91,6 +91,81 @@ const authAPI = {
   refresh: (refresh_token) => sbFetch('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: JSON.stringify({ refresh_token }) }),
 };
 
+// ===== File d'attente hors-ligne =====
+// Quand le réseau est indisponible, les écritures (post/patch/del) sont stockées
+// localement et rejouées automatiquement dès que la connexion revient.
+const QUEUE_KEY = 'cliniplus_queue_offline';
+const getQueue = () => { try { return JSON.parse(localStorage.getItem(QUEUE_KEY)) || []; } catch { return []; } };
+const setQueueStorage = (q) => { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch {} };
+const genLocalId = () => 'local-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+
+let onQueueChange = () => {};
+const notifyQueueChange = () => { try { onQueueChange(getQueue().length); } catch {} };
+
+const enqueueEcriture = (op) => {
+  const q = getQueue();
+  q.push({ ...op, id: op.id || genLocalId(), createdAt: Date.now() });
+  setQueueStorage(q);
+  notifyQueueChange();
+};
+
+// Une erreur réseau (pas de connexion) se distingue d'une erreur HTTP normale
+// (RLS, validation...) : sbFetch lève un Error avec .status pour ces dernières,
+// alors qu'une vraie coupure réseau lève un TypeError natif du fetch.
+const estErreurReseau = (e) => !navigator.onLine || e instanceof TypeError;
+
+const synchroniserFile = async (token) => {
+  if (!navigator.onLine) return { ok: 0, fail: 0 };
+  const q = getQueue();
+  if (q.length === 0) return { ok: 0, fail: 0 };
+  const restantes = [];
+  const mapLocal = {}; // id temporaire (local-xxx) -> id réel une fois créé côté serveur
+  let ok = 0, fail = 0;
+
+  const remplacerIdsLocaux = (valeur) => {
+    if (typeof valeur !== 'string') return valeur;
+    return mapLocal[valeur] !== undefined ? mapLocal[valeur] : valeur;
+  };
+  const contientIdNonResolu = (valeur) => typeof valeur === 'string' && valeur.startsWith('local-') && mapLocal[valeur] === undefined;
+
+  for (const op of q) {
+    // Remplace toute référence à un ID temporaire déjà résolu plus tôt dans ce lot
+    let body = op.body;
+    if (body) {
+      const patched = {};
+      for (const [k, v] of Object.entries(body)) patched[k] = remplacerIdsLocaux(v);
+      body = patched;
+    }
+    let filter = op.filter;
+    if (filter) { for (const [l, r] of Object.entries(mapLocal)) filter = filter.split(l).join(r); }
+
+    // Si l'opération dépend encore d'un ID temporaire jamais résolu (son parent a échoué
+    // définitivement), inutile d'appeler le serveur : elle échouera forcément aussi.
+    const dependanceBloquee = (body && Object.values(body).some(contientIdNonResolu)) || (filter && contientIdNonResolu(filter));
+    if (dependanceBloquee) { fail++; continue; }
+
+    try {
+      if (op.method === 'POST') {
+        const res = await sbFetch(`/rest/v1/${op.table}`, { method: 'POST', body: JSON.stringify(body) }, token);
+        const cree = Array.isArray(res) ? res[0] : res;
+        if (op.localId && cree?.id) mapLocal[op.localId] = cree.id;
+      } else if (op.method === 'PATCH') {
+        await sbFetch(`/rest/v1/${op.table}?${filter}`, { method: 'PATCH', body: JSON.stringify(body) }, token);
+      } else if (op.method === 'DELETE') {
+        await sbFetch(`/rest/v1/${op.table}?${filter}`, { method: 'DELETE' }, token);
+      }
+      ok++;
+    } catch (e) {
+      if (estErreurReseau(e)) { restantes.push(op); } // toujours pas de réseau, on réessaiera plus tard
+      else { fail++; } // erreur définitive (ex: donnée invalide) — on abandonne cette action pour ne pas boucler indéfiniment
+    }
+  }
+  setQueueStorage(restantes);
+  notifyQueueChange();
+  if (ok > 0) window.dispatchEvent(new Event('cliniplus:sync-done'));
+  return { ok, fail };
+};
+
 // Verrou lecture-seule global (activé quand l'abonnement de la clinique est expiré).
 // Les écritures sur la table "cliniques" restent autorisées : la clinique doit pouvoir
 // mettre à jour ses infos et payer le renouvellement même en mode bloqué.
@@ -98,31 +173,66 @@ let LECTURE_SEULE = false;
 const setLectureSeule = (v) => { LECTURE_SEULE = v; };
 class AbonnementExpireError extends Error {}
 
+const verifierEcritureAutorisee = (table) => {
+  if (LECTURE_SEULE && table !== 'cliniques') {
+    const msg = "Abonnement expiré : renouvelez-le pour pouvoir enregistrer, modifier ou supprimer des données.";
+    alert(msg);
+    throw new AbonnementExpireError(msg);
+  }
+};
+
 const dbAPI = {
-  get: (table, filter, token) => sbFetch(`/rest/v1/${table}?${filter}&select=*`, {}, token),
-  post: (table, body, token) => {
-    if (LECTURE_SEULE && table !== 'cliniques') {
-      const msg = "Abonnement expiré : renouvelez-le pour pouvoir enregistrer de nouvelles données.";
-      alert(msg);
-      return Promise.reject(new AbonnementExpireError(msg));
+  get: async (table, filter, token) => {
+    try {
+      return await sbFetch(`/rest/v1/${table}?${filter}&select=*`, {}, token);
+    } catch (e) {
+      if (estErreurReseau(e)) return null; // pas de réseau : on garde la dernière liste connue en mémoire
+      throw e;
     }
-    return sbFetch(`/rest/v1/${table}`, { method: 'POST', body: JSON.stringify(body) }, token);
   },
-  patch: (table, filter, body, token) => {
-    if (LECTURE_SEULE && table !== 'cliniques') {
-      const msg = "Abonnement expiré : renouvelez-le pour pouvoir modifier des données.";
-      alert(msg);
-      return Promise.reject(new AbonnementExpireError(msg));
+  post: async (table, body, token) => {
+    verifierEcritureAutorisee(table);
+    if (!navigator.onLine) {
+      const local = { ...body, id: genLocalId(), _pending: true };
+      enqueueEcriture({ table, method: 'POST', body, localId: local.id });
+      return [local];
     }
-    return sbFetch(`/rest/v1/${table}?${filter}`, { method: 'PATCH', body: JSON.stringify(body) }, token);
+    try {
+      return await sbFetch(`/rest/v1/${table}`, { method: 'POST', body: JSON.stringify(body) }, token);
+    } catch (e) {
+      if (estErreurReseau(e)) {
+        const local = { ...body, id: genLocalId(), _pending: true };
+        enqueueEcriture({ table, method: 'POST', body, localId: local.id });
+        return [local];
+      }
+      throw e;
+    }
   },
-  del: (table, filter, token) => {
-    if (LECTURE_SEULE && table !== 'cliniques') {
-      const msg = "Abonnement expiré : renouvelez-le pour pouvoir supprimer des données.";
-      alert(msg);
-      return Promise.reject(new AbonnementExpireError(msg));
+  patch: async (table, filter, body, token) => {
+    verifierEcritureAutorisee(table);
+    if (!navigator.onLine) {
+      enqueueEcriture({ table, method: 'PATCH', filter, body });
+      return true;
     }
-    return sbFetch(`/rest/v1/${table}?${filter}`, { method: 'DELETE' }, token);
+    try {
+      return await sbFetch(`/rest/v1/${table}?${filter}`, { method: 'PATCH', body: JSON.stringify(body) }, token);
+    } catch (e) {
+      if (estErreurReseau(e)) { enqueueEcriture({ table, method: 'PATCH', filter, body }); return true; }
+      throw e;
+    }
+  },
+  del: async (table, filter, token) => {
+    verifierEcritureAutorisee(table);
+    if (!navigator.onLine) {
+      enqueueEcriture({ table, method: 'DELETE', filter });
+      return true;
+    }
+    try {
+      return await sbFetch(`/rest/v1/${table}?${filter}`, { method: 'DELETE' }, token);
+    } catch (e) {
+      if (estErreurReseau(e)) { enqueueEcriture({ table, method: 'DELETE', filter }); return true; }
+      throw e;
+    }
   },
 };
 
@@ -923,13 +1033,23 @@ function PatientsPage({ session, clinique, onConsult }) {
   }, [clinique.id, token]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const onSync = () => load();
+    window.addEventListener('cliniplus:sync-done', onSync);
+    return () => window.removeEventListener('cliniplus:sync-done', onSync);
+  }, [load]);
 
   const save = async () => {
     if (!form.nom) return;
     setSaving(true);
     try {
-      await dbAPI.post('patients', { ...form, clinique_id: clinique.id, numero_dossier: '' }, token);
-      await load();
+      const res = await dbAPI.post('patients', { ...form, clinique_id: clinique.id, numero_dossier: '' }, token);
+      const nouveau = Array.isArray(res) ? res[0] : res;
+      if (nouveau?._pending) {
+        setPatients(list => [nouveau, ...list]); // affichage immédiat même hors-ligne
+      } else {
+        await load();
+      }
       setShowModal(false);
       setForm({ nom: '', prenom: '', date_naissance: '', sexe: 'M', telephone: '', adresse: '', profession: '', groupe_sanguin: '', allergies: '', antecedents: '' });
     } catch (e) {
@@ -959,8 +1079,11 @@ function PatientsPage({ session, clinique, onConsult }) {
             : <table className="table">
               <thead><tr><th>N° Dossier</th><th>Patient</th><th>Âge</th><th>Sexe</th><th>Téléphone</th><th>Groupe</th><th>Actions</th></tr></thead>
               <tbody>{filtered.map(p => (
-                <tr key={p.id}>
-                  <td><span className="tag" style={{ background: 'rgba(0,200,150,0.1)', color: 'var(--accent)' }}>{p.numero_dossier || 'N/A'}</span></td>
+                <tr key={p.id} style={p._pending ? { opacity: 0.7 } : undefined}>
+                  <td>{p._pending
+                    ? <span className="tag" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--accent3)' }}>⏳ En attente</span>
+                    : <span className="tag" style={{ background: 'rgba(0,200,150,0.1)', color: 'var(--accent)' }}>{p.numero_dossier || 'N/A'}</span>}
+                  </td>
                   <td><strong>{p.nom} {p.prenom}</strong></td>
                   <td>{age(p.date_naissance)}</td>
                   <td>{p.sexe === 'M' ? '♂ M' : '♀ F'}</td>
@@ -968,8 +1091,8 @@ function PatientsPage({ session, clinique, onConsult }) {
                   <td>{p.groupe_sanguin || '—'}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn btn-info btn-sm" onClick={() => setSelectedPatient(p)}>📋 Dossier</button>
-                      <button className="btn btn-primary btn-sm" onClick={() => onConsult(p)}>🩺 Consulter</button>
+                      <button className="btn btn-info btn-sm" onClick={() => setSelectedPatient(p)} disabled={p._pending} title={p._pending ? 'Disponible une fois synchronisé' : ''}>📋 Dossier</button>
+                      <button className="btn btn-primary btn-sm" onClick={() => onConsult(p)} disabled={p._pending} title={p._pending ? 'Disponible une fois synchronisé' : ''}>🩺 Consulter</button>
                     </div>
                   </td>
                 </tr>
@@ -1324,6 +1447,7 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient, 
   const [ordoNotes, setOrdoNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [consultEnAttente, setConsultEnAttente] = useState(false);
   const [error, setError] = useState('');
   const [patientSearch, setPatientSearch] = useState('');
   const token = session?.access_token;
@@ -1384,6 +1508,7 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient, 
       const consultRes = await dbAPI.post('consultations', dataConsult, token);
       const consult = Array.isArray(consultRes) ? consultRes[0] : consultRes;
       if (!consult?.id) { setError('Erreur création consultation.'); setSaving(false); return; }
+      setConsultEnAttente(!!consult._pending);
 
       // Journal de traçabilité
       await logAction(clinique.id, profil, 'Création consultation', 'consultations',
@@ -1421,9 +1546,15 @@ function ConsultationsPage({ session, clinique, patientInitial, onClearPatient, 
   if (saved) return (
     <div className="fade-in">
       <div className="card" style={{ textAlign: 'center', padding: 40 }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Consultation enregistrée !</div>
-        <p style={{ color: 'var(--text2)', marginBottom: 24 }}>La consultation a été sauvegardée avec les analyses et l'ordonnance.</p>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>{consultEnAttente ? '⏳' : '✅'}</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+          {consultEnAttente ? 'Consultation enregistrée hors-ligne' : 'Consultation enregistrée !'}
+        </div>
+        <p style={{ color: 'var(--text2)', marginBottom: 24 }}>
+          {consultEnAttente
+            ? "Elle sera automatiquement envoyée au serveur dès le retour de la connexion."
+            : "La consultation a été sauvegardée avec les analyses et l'ordonnance."}
+        </p>
         <button className="btn btn-primary" onClick={() => setSaved(false)}>+ Nouvelle consultation</button>
       </div>
     </div>
@@ -1601,15 +1732,26 @@ function RendezVousPage({ session, clinique, profil }) {
   }, [clinique.id, token]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const onSync = () => load();
+    window.addEventListener('cliniplus:sync-done', onSync);
+    return () => window.removeEventListener('cliniplus:sync-done', onSync);
+  }, [load]);
 
   const save = async () => {
     if (!form.patient_id || !form.date_heure) return;
     setSaving(true);
     try {
-      await dbAPI.post('rendez_vous', { ...form, clinique_id: clinique.id }, token);
-      await logAction(clinique.id, profil, 'Rendez-vous créé', 'rdv',
-        `Date: ${form.date_heure} | Motif: ${form.motif || 'N/A'}`, token);
-      await load();
+      const res = await dbAPI.post('rendez_vous', { ...form, clinique_id: clinique.id }, token);
+      const nouveau = Array.isArray(res) ? res[0] : res;
+      if (nouveau?._pending) {
+        const patient = patients.find(p => p.id === form.patient_id);
+        setRdvs(list => [...list, { ...nouveau, patients: patient ? { nom: patient.nom, prenom: patient.prenom } : null }]);
+      } else {
+        await logAction(clinique.id, profil, 'Rendez-vous créé', 'rdv',
+          `Date: ${form.date_heure} | Motif: ${form.motif || 'N/A'}`, token);
+        await load();
+      }
       setShowModal(false);
       setForm({ patient_id: '', date_heure: '', motif: '', statut: 'planifie', notes: '' });
     } catch (e) {
@@ -1620,8 +1762,12 @@ function RendezVousPage({ session, clinique, profil }) {
 
   const updateStatut = async (id, statut) => {
     try {
-      await dbAPI.patch('rendez_vous', `id=eq.${id}`, { statut }, token);
-      await load();
+      const res = await dbAPI.patch('rendez_vous', `id=eq.${id}`, { statut }, token);
+      if (res === true && !navigator.onLine) {
+        setRdvs(list => list.map(r => r.id === id ? { ...r, statut, _pending: true } : r));
+      } else {
+        await load();
+      }
     } catch (e) {
       alert("Échec de la mise à jour du rendez-vous : " + e.message);
     }
@@ -1646,11 +1792,14 @@ function RendezVousPage({ session, clinique, profil }) {
               <tbody>{rdvs.map(r => {
                 const p = getPatient(r.patient_id);
                 return (
-                  <tr key={r.id}>
+                  <tr key={r.id} style={r._pending ? { opacity: 0.7 } : undefined}>
                     <td><strong>{new Date(r.date_heure).toLocaleDateString('fr-FR')}</strong><br /><span style={{ color: 'var(--text3)', fontSize: 12 }}>{new Date(r.date_heure).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span></td>
-                    <td>{p ? `${p.nom} ${p.prenom || ''}` : '—'}</td>
+                    <td>{p ? `${p.nom} ${p.prenom || ''}` : (r.patients ? `${r.patients.nom} ${r.patients.prenom || ''}` : '—')}</td>
                     <td>{r.motif || '—'}</td>
-                    <td><span className="badge" style={{ background: `${statutColor(r.statut)}22`, color: statutColor(r.statut) }}>{statutLabel(r.statut)}</span></td>
+                    <td>
+                      <span className="badge" style={{ background: `${statutColor(r.statut)}22`, color: statutColor(r.statut) }}>{statutLabel(r.statut)}</span>
+                      {r._pending && <span className="badge" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--accent3)', marginLeft: 6 }}>⏳ En attente</span>}
+                    </td>
                     <td>
                       <select className="form-select" style={{ width: 'auto', padding: '4px 8px', fontSize: 12 }} value={r.statut} onChange={e => updateStatut(r.id, e.target.value)}>
                         <option value="planifie">Planifié</option>
@@ -2863,6 +3012,27 @@ function ModalPaiement({ clinique, session, onClose, onSuccess }) {
 }
 
 // ========== BANNIÈRE ABONNEMENT ==========
+function BanniereHorsLigne({ enLigne, nbEnAttente, synchroEnCours }) {
+  if (enLigne && nbEnAttente === 0) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      background: enLigne ? 'rgba(0,200,150,0.08)' : 'rgba(245,158,11,0.10)',
+      border: `1px solid ${enLigne ? 'rgba(0,200,150,0.3)' : 'rgba(245,158,11,0.3)'}`,
+      borderRadius: 10, padding: '10px 16px', marginBottom: 14, fontSize: 13,
+    }}>
+      <span style={{ fontSize: 18 }}>{!enLigne ? '📴' : synchroEnCours ? '🔄' : '☁️'}</span>
+      <span>
+        {!enLigne
+          ? <>Hors-ligne — vos saisies sont enregistrées localement{nbEnAttente > 0 ? ` (${nbEnAttente} en attente)` : ''} et seront synchronisées dès le retour du réseau.</>
+          : synchroEnCours
+            ? 'Synchronisation des données en attente…'
+            : `${nbEnAttente} action(s) en attente de synchronisation.`}
+      </span>
+    </div>
+  );
+}
+
 function BanniereAbonnement({ clinique, profil, onRenew }) {
   if (!clinique.date_expiration_abonnement) return null;
 
@@ -4061,6 +4231,31 @@ export default function App() {
   const [loadingSession, setLoadingSession] = useState(true);
   const [showTarifs, setShowTarifs] = useState(false);
   const [showPaiement, setShowPaiement] = useState(false);
+  const [enLigne, setEnLigne] = useState(navigator.onLine);
+  const [nbEnAttente, setNbEnAttente] = useState(() => getQueue().length);
+  const [synchroEnCours, setSynchroEnCours] = useState(false);
+
+  // Suivi connexion réseau + synchronisation automatique de la file d'attente
+  useEffect(() => {
+    onQueueChange = setNbEnAttente;
+    const tenterSync = async () => {
+      const token = loadSession()?.access_token;
+      if (!token || getQueue().length === 0) return;
+      setSynchroEnCours(true);
+      await synchroniserFile(token);
+      setSynchroEnCours(false);
+    };
+    const onOnline = () => { setEnLigne(true); tenterSync(); };
+    const onOffline = () => setEnLigne(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    if (navigator.onLine) tenterSync();
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      onQueueChange = () => {};
+    };
+  }, []);
 
   // Restaurer la session au chargement
   useEffect(() => {
@@ -4076,10 +4271,27 @@ export default function App() {
             setSession(saved);
             setProfil(p[0]);
             setClinique(c[0]);
+            try { localStorage.setItem('cliniplus_cache_profil_clinique', JSON.stringify({ profil: p[0], clinique: c[0] })); } catch {}
+          } else if (c === null) {
+            // Pas de réseau au moment de charger la clinique : on garde la session avec le cache local si dispo
+            restaurerDepuisCache(saved);
           } else { clearSession(); }
+        } else if (p === null) {
+          // Pas de réseau : ce n'est pas une session invalide, on retombe sur le dernier profil/clinique connus
+          restaurerDepuisCache(saved);
         } else { clearSession(); }
       }
       setLoadingSession(false);
+    };
+    const restaurerDepuisCache = (saved) => {
+      try {
+        const cache = JSON.parse(localStorage.getItem('cliniplus_cache_profil_clinique'));
+        if (cache?.profil && cache?.clinique) {
+          setSession(saved);
+          setProfil(cache.profil);
+          setClinique(cache.clinique);
+        }
+      } catch {}
     };
     restore();
   }, []);
@@ -4093,7 +4305,10 @@ export default function App() {
     if (Array.isArray(p) && p.length > 0) {
       setProfil(p[0]);
       const c = await dbAPI.get('cliniques', `id=eq.${p[0].clinique_id}`, token);
-      if (Array.isArray(c) && c.length > 0) setClinique(c[0]);
+      if (Array.isArray(c) && c.length > 0) {
+        setClinique(c[0]);
+        try { localStorage.setItem('cliniplus_cache_profil_clinique', JSON.stringify({ profil: p[0], clinique: c[0] })); } catch {}
+      }
     }
   };
 
@@ -4212,6 +4427,7 @@ export default function App() {
 <button onClick={handleLogout} style={{background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'var(--danger)',padding:'6px 14px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:500}}>↪ Déconnexion</button>
 </div>
           <div className="content">
+            <BanniereHorsLigne enLigne={enLigne} nbEnAttente={nbEnAttente} synchroEnCours={synchroEnCours} />
             <BanniereAbonnement
               clinique={clinique}
               profil={profil}
